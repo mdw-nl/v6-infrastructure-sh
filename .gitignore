@@ -1,0 +1,7 @@
+venv/
+
+# until environment is tested
+*.ipynb
+
+.psi-ignore
+report.md
