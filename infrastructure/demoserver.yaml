@@ -1,0 +1,34 @@
+algorithm_stores:
+- name: Community store
+  url: https://store.cotopaxi.vantage6.ai
+- name: GitHub
+  url: https://ghcr.io
+allow_drop_all: 'True'
+api_path: /api
+description: Demo server Vantage6
+ip: 0.0.0.0
+jwt_secret_key: 95161ee4-dcfd-11ed-b875-2f6e36e39b10
+logging:
+  backup_count: 5
+  datefmt: '%Y-%m-%d %H:%M:%S'
+  file: demo-server.log
+  format: '%(asctime)s - %(name)-14s - %(levelname)-8s - %(message)s'
+  level: DEBUG
+  loggers:
+  - level: warning
+    name: urllib3
+  - level: warning
+    name: socketIO-client
+  - level: warning
+    name: socketio.server
+  - level: warning
+    name: engineio.server
+  - level: warning
+    name: sqlalchemy.engine
+  - level: warning
+    name: requests_oauthlib.oauth2_session
+  max_size: 1024
+  use_console: true
+port: '5070'
+uri: sqlite:///default.sqlite
+server_url: http://localhost:5070/api

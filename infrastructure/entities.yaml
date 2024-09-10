@@ -1,0 +1,51 @@
+collaborations:
+- encrypted: false
+  name: v6-demo
+  participants:
+  - api_key: 844a7d92-1cc9-4856-bf33-0613252d5b3c
+    name: alpha
+  - api_key: 57143784-19ef-456b-94c9-ba68c8cb079b
+    name: beta
+  - api_key: 57143784-19ef-456b-94c9-ba68c8cb079c
+    name: gamma
+nodes: []
+organizations:
+- name: alpha
+  address1: alphastreet 42
+  address2: 
+  country: Netherlands
+  domain: alpha.nl
+  public_key: ''
+  users:
+  - email: alpha@alpha.nl
+    username: alpha-user
+    firstname: MyAlpha
+    lastname: AlphaLastName
+    password: alpha-password 
+  zipcode: 1234AB
+- name: beta
+  address1: betastreet 42
+  address2: 
+  country: Netherlands
+  domain: beta.nl
+  public_key: ''
+  users:
+  - email: beta@beta.nl
+    username: beta-user
+    firstname: BetaName
+    lastname: BetaSurname
+    password: beta-password
+  zipcode: 1234AB
+- name: gamma
+  address1: gamma 42
+  address2: 
+  country: Netherlands
+  domain: gamma.nl
+  public_key: ''
+  users:
+  - email: gamma@gamma.nl
+    username: gamma-user
+    firstname: GammaName
+    lastname: GammaSurname
+    password: gamma-password
+  zipcode: 1234AB

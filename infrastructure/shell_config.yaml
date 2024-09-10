@@ -1,0 +1,30 @@
+# Configuration for the setup and shutdown scripts
+
+# Version information
+version:
+  node: "4.4.1"
+  server: "4.4.1"
+
+# Paths
+paths:
+  venv: "./venv"
+  server_config: "demoserver.yaml"
+  entities_file: "entities.yaml"
+  alpha_config: "alpha.yaml"
+  beta_config: "beta.yaml"
+  gamma_config: "gamma.yaml"
+
+# Docker settings
+docker:
+  registry: "harbor2.vantage6.ai/infrastructure"
+  ui_port: "80"
+
+# UI Settings
+ui:
+  server_url: "http://localhost:5070"
+  ui_url: "http://localhost"
+  api_path: "/api"
+
+# Python interpreter
+python:
+  interpreter: "python3.11" #"/usr/bin/python3"

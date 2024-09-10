@@ -1,7 +1,10 @@
 venv/
-
-# until environment is tested
+__pycache__/
+*.pyc
+*.yaml.bak
 *.ipynb
 
-.psi-ignore
-report.md
+# other 
+.DS_Store
+#.psi-ignore
+#report.md

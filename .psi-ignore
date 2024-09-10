@@ -1,0 +1,5 @@
+venv/*
+*.yaml.bak
+.git/*
+*.ipynb
+report.md

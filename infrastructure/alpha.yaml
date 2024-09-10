@@ -1,0 +1,30 @@
+api_key: 844a7d92-1cc9-4856-bf33-0613252d5b3c
+api_path: /api
+databases:
+- label: default
+  type: csv
+  uri: /home/johan/Repositories/PHT/beweeghuis-pht/infrastructure/alpha.csv
+encryption:
+  enabled: false
+  private_key: ''
+logging:
+  backup_count: 5
+  datefmt: '%Y-%m-%d %H:%M:%S'
+  format: '%(asctime)s - %(name)-14s - %(levelname)-8s - %(message)s'
+  level: DEBUG
+  loggers:
+  - level: warning
+    name: urllib3
+  - level: warning
+    name: requests
+  - level: warning
+    name: engineio.client
+  - level: warning
+    name: docker.utils.config
+  - level: warning
+    name: docker.auth
+  max_size: 1024
+  use_console: true
+port: '5000'
+server_url: http://host.docker.internal
+task_dir: ./alpha/tasks
