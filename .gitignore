@@ -6,5 +6,5 @@ __pycache__/
 
 # other 
 .DS_Store
-#.psi-ignore
-#report.md
+.psi-ignore
+report.md

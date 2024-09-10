@@ -1,9 +1,9 @@
-api_key: 57143784-19ef-456b-94c9-ba68c8cb079c
+api_key: 844a7d92-1cc9-4856-bf33-0613252d5b3c
 api_path: /api
 databases:
 - label: default
   type: csv
-  uri: /home/johan/Repositories/PHT/beweeghuis-pht/infrastructure/gamma.csv
+  uri: ${ALGO_DATA_DIRECTORY}/alpha.csv
 encryption:
   enabled: false
   private_key: ''
@@ -27,4 +27,4 @@ logging:
   use_console: true
 port: '5000'
 server_url: http://host.docker.internal
-task_dir: ./gamma/tasks
+task_dir: ./alpha/tasks

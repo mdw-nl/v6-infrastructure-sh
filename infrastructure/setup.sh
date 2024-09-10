@@ -1,34 +1,26 @@
 #! /bin/bash
 
-# Load configuration from YAML file
-CONFIG_FILE=shell_config.yaml
-
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Ensure yq is installed
+# Ensure yq is installed if needed (you can remove this block if not needed anymore)
 if ! command_exists yq; then
-    echo "Error: 'yq' is not installed. Please install it before running this script."
-    exit 1
+    echo "Warning: 'yq' is not installed. Skipping its usage."
 fi
 
-# Parse YAML file
-VERSION_NODE=$(yq eval '.version.node' "$CONFIG_FILE")
-VERSION_SERVER=$(yq eval '.version.server' "$CONFIG_FILE")
-VENV_PATH=$(yq eval '.paths.venv' "$CONFIG_FILE")
-SERVER_CONFIG=$(yq eval '.paths.server_config' "$CONFIG_FILE")
-ENTITIES_FILE=$(yq eval '.paths.entities_file' "$CONFIG_FILE")
-ALPHA_CONFIG=$(yq eval '.paths.alpha_config' "$CONFIG_FILE")
-BETA_CONFIG=$(yq eval '.paths.beta_config' "$CONFIG_FILE")
-GAMMA_CONFIG=$(yq eval '.paths.gamma_config' "$CONFIG_FILE")
-DOCKER_REGISTRY=$(yq eval '.docker.registry' "$CONFIG_FILE")
-UI_PORT=$(yq eval '.docker.ui_port' "$CONFIG_FILE")
-UI_URL=$(yq eval '.ui.ui_url' "$CONFIG_FILE")
-SERVER_URL=$(yq eval '.ui.server_url' "$CONFIG_FILE")
-API_PATH=$(yq eval '.ui.api_path' "$CONFIG_FILE")
-PYTHON_INTERPRETER=$(yq eval '.python.interpreter' "$CONFIG_FILE")
+# Default values for environment variables (can be overridden in CI or locally)
+VERSION_VANTAGE6=${VERSION_VANTAGE6:-"4.4.1"}
+VENV_PATH=${VENV_PATH:-"./venv"}
+SERVER_CONFIG=${SERVER_CONFIG:-"demoserver.yaml"}
+ENTITIES_FILE=${ENTITIES_FILE:-"entities.yaml"}
+DOCKER_REGISTRY=${DOCKER_REGISTRY:-"harbor2.vantage6.ai/infrastructure"}
+UI_PORT=${UI_PORT:-"80"}
+UI_URL=${UI_URL:-"http://localhost"}
+SERVER_URL=${SERVER_URL:-"http://localhost:5070"}
+API_PATH=${API_PATH:-"/api"}
+PYTHON_INTERPRETER=${PYTHON_INTERPRETER:-"python3.11"}
 
 # OS detection
 OS=$(uname -s)
@@ -77,38 +69,46 @@ setup_venv() {
 install_dependencies() {
     # Check if requirements.txt exists
     if [ ! -f requirements.txt ]; then
-        echo "Error: 'requirements.txt' not found in the current directory."
-        exit 1
+        echo "Warning: 'requirements.txt' not found in the current directory."
+    else
+        echo "Installing dependencies from 'requirements.txt'."
+        pip install -r requirements.txt
     fi
-    echo "Installing dependencies from 'requirements.txt'."
-    pip install -r requirements.txt
+    pip install vantage6==$VERSION_VANTAGE6
 }
 
 pull_docker_images() {
     echo "Pulling Docker images..."
-    docker pull "$DOCKER_REGISTRY/server:$VERSION_SERVER"
-    docker pull "$DOCKER_REGISTRY/node:$VERSION_NODE"
+    docker pull "$DOCKER_REGISTRY/server:$VERSION_VANTAGE6"
+    docker pull "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
 }
 
 start_server() {
     echo "Starting the server..."
-
-    v6 server start --user -c "$(pwd)/$SERVER_CONFIG" --image "$DOCKER_REGISTRY/server:$VERSION_SERVER"
+    v6 server start --user -c "$(pwd)/$SERVER_CONFIG" --image "$DOCKER_REGISTRY/server:$VERSION_VANTAGE6"
 }
 
 import_entities() {
     echo "Importing entities..."
     docker cp "$(pwd)/${ENTITIES_FILE}" vantage6-demoserver-user-ServerType.V6SERVER:/entities.yaml
     docker exec vantage6-demoserver-user-ServerType.V6SERVER /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
-    # FIXME: maybe #1357 fixes this?
-    #v6 server import --wait true --user -c "$(pwd)/$SERVER_CONFIG" "$(pwd)/$ENTITIES_FILE" --image "$DOCKER_REGISTRY/server:$VERSION_SERVER"
 }
 
+# Function to create and start nodes
 start_node() {
-    local config_file="$1"
-    echo "Starting node with config '$config_file'..."
-    v6 node start --user -c "$(pwd)/$config_file" --image "$DOCKER_REGISTRY/node:$VERSION_NODE"
+    NODE_NAME=$1
+    API_KEY=$2
+    PORT=$3
+    ALGO_DATA_DIRECTORY=${ALGO_DATA_DIRECTORY:-"./data"}
+    VANTAGE6_VERSION=$4
+    DOCKER_REGISTRY=$5
+    SERVER_URL=$6
+    VENV_PATH=$7
+
+    # Call the create_node.sh script to create the node and its configuration
+    ./create_node.sh "$NODE_NAME" "$API_KEY" "$ALGO_DATA_DIRECTORY" "$PORT" "$VANTAGE6_VERSION" "$DOCKER_REGISTRY" "$SERVER_URL" "$VENV_PATH"
 }
+
 
 start_ui() {
     echo "Starting the UI..."
@@ -133,7 +133,6 @@ open_browser() {
 # Main script execution
 echo "Setting up the environment..."
 
-
 setup_venv
 install_dependencies
 pull_docker_images
@@ -142,9 +141,9 @@ start_server
 import_entities
 
 # Start nodes
-start_node "$ALPHA_CONFIG"
-start_node "$BETA_CONFIG"
-start_node "$GAMMA_CONFIG"
+start_node "alpha" "844a7d92-1cc9-4856-bf33-0613252d5b3c" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
+start_node "beta" "57143784-19ef-456b-94c9-ba68c8cb079b" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
+start_node "gamma" "57143784-19ef-456b-94c9-ba68c8cb079c" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
 
 # Start UI and open browser
 start_ui

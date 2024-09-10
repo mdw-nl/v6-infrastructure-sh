@@ -1,20 +1,8 @@
 #!/bin/bash
 
-CONFIG_FILE=shell_config.yaml
-
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Ensure yq is installed
-if ! command_exists yq; then
-    echo "Error: 'yq' is not installed. Please install it before running this script."
-    exit 1
-fi
-
-VENV_PATH=$(yq eval '.paths.venv' "$CONFIG_FILE")
-PYTHON_INTERPRETER=$(yq eval '.python.interpreter' "$CONFIG_FILE")
+# Default values for environment variables (can be overridden in CI or locally)
+VENV_PATH=${VENV_PATH:-"./venv"}
+PYTHON_INTERPRETER=${PYTHON_INTERPRETER:-"python3.11"}
 
 # Expand the tilde (~) in VENV_PATH
 VENV_PATH="${VENV_PATH/#\~/$HOME}"
