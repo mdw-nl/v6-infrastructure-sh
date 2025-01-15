@@ -64,4 +64,4 @@ fi
 . "$VENV_PATH/bin/activate"
 
 
-v6 node start --user -c ${NODE_NAME}.yaml --image "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
+v6 node start --user -c ${NODE_NAME}.yaml #--image "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"

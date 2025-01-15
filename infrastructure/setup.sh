@@ -11,7 +11,7 @@ if ! command_exists yq; then
 fi
 
 # Default values for environment variables (can be overridden in CI or locally)
-VERSION_VANTAGE6=${VERSION_VANTAGE6:-"4.4.1"}
+VERSION_VANTAGE6=${VERSION_VANTAGE6:-"4.8.2"}
 VENV_PATH=${VENV_PATH:-"./venv"}
 SERVER_CONFIG=${SERVER_CONFIG:-"demoserver.yaml"}
 ENTITIES_FILE=${ENTITIES_FILE:-"entities.yaml"}
@@ -20,7 +20,9 @@ UI_PORT=${UI_PORT:-"80"}
 UI_URL=${UI_URL:-"http://localhost"}
 SERVER_URL=${SERVER_URL:-"http://localhost:5070"}
 API_PATH=${API_PATH:-"/api"}
-PYTHON_INTERPRETER=${PYTHON_INTERPRETER:-"python3.11"}
+PYTHON_INTERPRETER=${PYTHON_INTERPRETER:-"python3.12"}
+
+echo $VERSION_VANTAGE6
 
 # OS detection
 OS=$(uname -s)
@@ -141,9 +143,9 @@ start_server
 import_entities
 
 # Start nodes
-start_node "alpha" "844a7d92-1cc9-4856-bf33-0613252d5b3c" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
-start_node "beta" "57143784-19ef-456b-94c9-ba68c8cb079b" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
-start_node "gamma" "57143784-19ef-456b-94c9-ba68c8cb079c" "5000" $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
+start_node "alpha" "844a7d92-1cc9-4856-bf33-0613252d5b3c" 5070 $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
+start_node "beta" "57143784-19ef-456b-94c9-ba68c8cb079b" 5070 $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
+start_node "gamma" "57143784-19ef-456b-94c9-ba68c8cb079c" 5070 $VERSION_VANTAGE6 $DOCKER_REGISTRY $SERVER_URL $VENV_PATH
 
 # Start UI and open browser
 start_ui
