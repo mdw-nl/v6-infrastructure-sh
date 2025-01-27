@@ -8,3 +8,8 @@ __pycache__/
 .DS_Store
 .psi-ignore
 report.md
+
+# node config files
+alpha.yaml
+beta.yaml
+gamma.yaml
