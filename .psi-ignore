@@ -3,3 +3,7 @@ venv/*
 .git/*
 *.ipynb
 report.md
+
+alpha.yanl
+beta.yaml
+gamma.yaml
