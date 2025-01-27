@@ -1,0 +1,34 @@
+name: Vantage6 Infrastructure Test
+
+on:
+
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  vantage6-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Prepare and run setup
+        run: |
+          cd infrastructure
+          chmod +x setup.sh shutdown.sh
+          # (Optional) Show scripts for debugging
+          # cat setup.sh
+          ./setup.sh
+
+      - name: Check that containers are running
+        run: docker ps
+
+      - name: Tear down vantage6
+        run: |
+          cd infrastructure
+          ./shutdown.sh
+
+      - name: Confirm containers are removed
+        run: docker ps -a
