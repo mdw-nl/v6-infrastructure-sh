@@ -1,5 +1,5 @@
 #! /bin/bash
-#set -e  # Stop on errors
+set -e  # Stop on errors
 
 # Load configuration
 source config.env
