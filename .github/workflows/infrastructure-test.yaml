@@ -20,15 +20,24 @@ jobs:
           chmod +x setup.sh shutdown.sh
           # (Optional) Show scripts for debugging
           # cat setup.sh
-          ./setup.sh
+          ENVIRONMENT=CI ./setup.sh
 
       - name: Check that containers are running
         run: docker ps
 
+      - name: Infrastructure Tests
+        run: |
+          cd infrastructure_tests
+          for script in *.sh; do
+            echo "Running test script: $script"
+            chmod +x "$script"
+            ./"$script"
+          done
+
       - name: Tear down vantage6
         run: |
           cd infrastructure
-          ./shutdown.sh
+          ENVIRONMENT=CI ./shutdown.sh
 
       - name: Confirm containers are removed
         run: docker ps -a
