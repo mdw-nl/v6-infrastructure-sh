@@ -40,7 +40,7 @@ jobs:
           chmod +x setup.sh shutdown.sh
           # We'll pass ENVIRONMENT=CI so it doesn't open a browser
           # and fails on first error.
-          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=${{ matrix['python-version'] }} ./setup.sh
+          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./setup.sh
         working-directory: infrastructure
 
       # 5) Verify containers are running
@@ -60,7 +60,7 @@ jobs:
       # 7) Tear down vantage6
       - name: Shutdown vantage6
         run: |
-          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=${{ matrix['python-version'] }} ./shutdown.sh
+          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./shutdown.sh
         working-directory: infrastructure
 
       # 8) Confirm containers are removed
