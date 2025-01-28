@@ -12,8 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ '3.9', '3.10', '3.11' ]
-        vantage6-version: [ '4.8.0', '4.8.1', '4.8.2' ]
+        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13' ]
+        vantage6-version: [ '4.8.0', '4.8.1', '4.8.2', 'latest' ]
 
     runs-on: ubuntu-latest
 
@@ -37,7 +37,6 @@ jobs:
       # 4) Move to the infrastructure folder
       - name: Prepare scripts
         run: |
-          cd infrastructure
           chmod +x setup.sh shutdown.sh
           # We'll pass ENVIRONMENT=CI so it doesn't open a browser
           # and fails on first error.
@@ -51,13 +50,12 @@ jobs:
       # 6) (Optional) Run your test scripts from infrastructure_tests
       - name: Run infrastructure tests
         run: |
-          cd infrastructure_tests
           for script in *.sh; do
             echo "Running test script: $script"
             chmod +x "$script"
             ./"$script"
           done
-        working-directory: infrastructure
+        working-directory: infrastructure_tests
 
       # 7) Tear down vantage6
       - name: Shutdown vantage6
