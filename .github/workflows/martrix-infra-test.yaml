@@ -1,0 +1,70 @@
+name: Vantage6 Multi-Version Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  vantage6-matrix:
+    # We'll test multiple Python + vantage6 versions
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ '3.9', '3.10', '3.11' ]
+        vantage6-version: [ '4.8.0', '4.8.1', '4.8.2' ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Check out repository
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      # 2) Set up Python environment for the chosen python-version
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # 3) Make vantage6-version available to your scripts
+      #    We'll set it as an environment variable so that
+      #    your `config.env` or scripts can pick it up.
+      - name: Define vantage6 version
+        run: echo "VERSION_VANTAGE6=${{ matrix['vantage6-version'] }}" >> $GITHUB_ENV
+
+      # 4) Move to the infrastructure folder
+      - name: Prepare scripts
+        run: |
+          cd infrastructure
+          chmod +x setup.sh shutdown.sh
+          # We'll pass ENVIRONMENT=CI so it doesn't open a browser
+          # and fails on first error.
+          ENVIRONMENT=CI ./setup.sh
+        working-directory: infrastructure
+
+      # 5) Verify containers are running
+      - name: Check vantage6 containers
+        run: docker ps
+
+      # 6) (Optional) Run your test scripts from infrastructure_tests
+      - name: Run infrastructure tests
+        run: |
+          cd infrastructure_tests
+          for script in *.sh; do
+            echo "Running test script: $script"
+            chmod +x "$script"
+            ./"$script"
+          done
+        working-directory: infrastructure
+
+      # 7) Tear down vantage6
+      - name: Shutdown vantage6
+        run: |
+          ENVIRONMENT=CI ./shutdown.sh
+        working-directory: infrastructure
+
+      # 8) Confirm containers are removed
+      - name: Confirm containers are removed
+        run: docker ps -a
