@@ -57,11 +57,11 @@ start_node() {
     NODE_NAME=$1
     API_KEY=$2
     PORT=$3
-    ALGO_DATA_DIRECTORY=${ALGO_DATA_DIRECTORY:-"./data"}
-    VANTAGE6_VERSION=$4
-    DOCKER_REGISTRY=$5
-    SERVER_URL=$6
-    VENV_PATH=$7
+    ALGO_DATA_DIRECTORY=$4
+    VANTAGE6_VERSION=$5
+    DOCKER_REGISTRY=$6
+    SERVER_URL=$7
+    VENV_PATH=$8
 
     # Call the create_node.sh script to create the node and its configuration
     ./create_node.sh "$NODE_NAME" "$API_KEY" "$ALGO_DATA_DIRECTORY" "$PORT" "$VANTAGE6_VERSION" "$DOCKER_REGISTRY" "$SERVER_URL" "$VENV_PATH"
@@ -86,4 +86,20 @@ open_browser() {
         Linux) xdg-open "$url" ;;  # Linux
         *) echo "Unsupported OS for opening browser automatically. Please open '$url' manually." ;;
     esac
+}
+
+get_absolute_filepath() {
+    # 1) Read the input path from the function’s argument
+    local input="$1"
+
+    # 2) Compute absolute directory
+    local abs_dir
+    abs_dir="$(cd "$(dirname "$input")" 2>/dev/null && pwd)"
+
+    # 3) Extract the basename
+    local base_name
+    base_name="$(basename "$input")"
+
+    # 4) Echo back the fully combined absolute path
+    echo "${abs_dir}/${base_name}"
 }
