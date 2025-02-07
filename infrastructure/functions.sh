@@ -84,7 +84,7 @@ open_browser() {
     case "$OS" in
         Darwin) open "$url" ;;  # macOS
         Linux)
-            if grep "microsoft" /proc/sys/kernel/osrelease > /dev/null; then
+            if grep "microsoft" /proc/sys/kernel/osrelease > /dev/null; then # WSL
             wslview "$url"
             else
             xdg-open "$url"
