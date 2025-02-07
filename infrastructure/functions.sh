@@ -48,9 +48,9 @@ start_server() {
 
 import_entities() {
     echo "Importing entities..."
-    SERVER_CONTAINER_NAME=$(docker ps -aqf "name=^vantage6-demoserver")
-    docker cp "$(pwd)/${ENTITIES_FILE}" "$SERVER_CONTAINER_NAME":/entities.yaml
-    docker exec "$SERVER_CONTAINER_NAME" /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
+    SERVER_CONTAINER_ID=$(docker ps -aqf "name=^vantage6-demoserver")
+    docker cp "$(pwd)/${ENTITIES_FILE}" "$SERVER_CONTAINER_ID":/entities.yaml
+    docker exec "$SERVER_CONTAINER_ID" /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
 }
 
 # Function to create and start nodes
