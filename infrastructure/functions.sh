@@ -34,6 +34,7 @@ install_dependencies() {
     fi
     if [ "$VERSION_VANTAGE6" = "latest" ]; then
         pip install vantage6
+        VERSION_VANTAGE6=$(pip show vantage6 | grep Version | awk '{print $2}')
     else
         pip install vantage6==$VERSION_VANTAGE6
     fi
