@@ -73,7 +73,7 @@ docker stop vantage6-ui 2>/dev/null || true
 docker rm -f vantage6-ui 2>/dev/null || true
 
 echo "Removing vantage6 server/node containers (if running)..."
-docker rm -f vantage6-demoserver-user-ServerType.V6SERVER vantage6-alpha-user vantage6-beta-user vantage6-gamma-user 2>/dev/null || true
+docker rm -f vantage6-demoserver-user-server vantage6-alpha-user vantage6-beta-user vantage6-gamma-user 2>/dev/null || true
 
 ##
 # 5) Clean vantage6 files from OS-specific paths
