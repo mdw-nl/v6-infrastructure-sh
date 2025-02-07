@@ -48,8 +48,8 @@ start_server() {
 
 import_entities() {
     echo "Importing entities..."
-    docker cp "$(pwd)/${ENTITIES_FILE}" vantage6-demoserver-user-ServerType.V6SERVER:/entities.yaml
-    docker exec vantage6-demoserver-user-ServerType.V6SERVER /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
+    docker cp "$(pwd)/${ENTITIES_FILE}" vantage6-demoserver-user-server:/entities.yaml
+    docker exec vantage6-demoserver-user-server /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
 }
 
 # Function to create and start nodes
@@ -83,7 +83,13 @@ open_browser() {
     echo "Opening browser at '$url'..."
     case "$OS" in
         Darwin) open "$url" ;;  # macOS
-        Linux) xdg-open "$url" ;;  # Linux
+        Linux)
+            if grep "microsoft" /proc/sys/kernel/osrelease > /dev/null; then
+            wslview "$url"
+            else
+            xdg-open "$url"
+            fi
+            ;;
         *) echo "Unsupported OS for opening browser automatically. Please open '$url' manually." ;;
     esac
 }

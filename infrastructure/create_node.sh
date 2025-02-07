@@ -51,6 +51,8 @@ logging:
 port: '$PORT'
 server_url: $SERVER_URL
 task_dir: ./${NODE_NAME}/tasks
+node_extra_hosts:
+  host.docker.internal: host-gateway
 EOL
 
 # Start the node
