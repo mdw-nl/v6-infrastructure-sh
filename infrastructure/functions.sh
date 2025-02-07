@@ -32,7 +32,11 @@ install_dependencies() {
         echo "Installing dependencies from 'requirements.txt'."
         pip install -r requirements.txt
     fi
-    pip install vantage6==$VERSION_VANTAGE6
+    if [ "$VERSION_VANTAGE6" = "latest" ]; then
+        pip install vantage6
+    else
+        pip install vantage6==$VERSION_VANTAGE6
+    fi
 }
 
 pull_docker_images() {
