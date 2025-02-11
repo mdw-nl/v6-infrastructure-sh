@@ -32,7 +32,12 @@ install_dependencies() {
         echo "Installing dependencies from 'requirements.txt'."
         pip install -r requirements.txt
     fi
-    pip install vantage6==$VERSION_VANTAGE6
+    if [ "$VERSION_VANTAGE6" = "latest" ]; then
+        pip install vantage6
+        VERSION_VANTAGE6=$(pip show vantage6 | grep Version | awk '{print $2}')
+    else
+        pip install vantage6==$VERSION_VANTAGE6
+    fi
 }
 
 pull_docker_images() {
@@ -48,8 +53,9 @@ start_server() {
 
 import_entities() {
     echo "Importing entities..."
-    docker cp "$(pwd)/${ENTITIES_FILE}" vantage6-demoserver-user-ServerType.V6SERVER:/entities.yaml
-    docker exec vantage6-demoserver-user-ServerType.V6SERVER /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
+    SERVER_CONTAINER_ID=$(docker ps -aqf "name=^vantage6-demoserver")
+    docker cp "$(pwd)/${ENTITIES_FILE}" "$SERVER_CONTAINER_ID":/entities.yaml
+    docker exec "$SERVER_CONTAINER_ID" /usr/local/bin/vserver-local import --config /mnt/config.yaml /entities.yaml
 }
 
 # Function to create and start nodes
@@ -83,7 +89,13 @@ open_browser() {
     echo "Opening browser at '$url'..."
     case "$OS" in
         Darwin) open "$url" ;;  # macOS
-        Linux) xdg-open "$url" ;;  # Linux
+        Linux)
+            if grep "microsoft" /proc/sys/kernel/osrelease > /dev/null; then # WSL
+            wslview "$url"
+            else
+            xdg-open "$url"
+            fi
+            ;;
         *) echo "Unsupported OS for opening browser automatically. Please open '$url' manually." ;;
     esac
 }

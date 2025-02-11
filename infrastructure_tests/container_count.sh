@@ -6,7 +6,7 @@ echo "Verifying vantage6 containers..."
 RUNNING_COUNT=$(docker ps --format '{{.Names}}' | grep '^vantage6-' | wc -l)
 
 # We expect exactly 5 vantage6 containers:
-#   - vantage6-demoserver-user-ServerType.V6SERVER
+#   - vantage6-demoserver-user-server
 #   - vantage6-alpha-user
 #   - vantage6-beta-user
 #   - vantage6-gamma-user
