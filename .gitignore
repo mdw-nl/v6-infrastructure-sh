@@ -4,6 +4,9 @@ __pycache__/
 *.yaml.bak
 *.ipynb
 
+# secrets
+.secrets.*
+
 # other 
 .DS_Store
 .psi-ignore
