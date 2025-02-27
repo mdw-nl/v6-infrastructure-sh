@@ -1,0 +1,26 @@
+[kaplan_meier]
+image = "harbor2.vantage6.ai/algorithms/kaplan-meier"
+name = "demo-km-analysis"
+description = "Kaplan-Meier dry-run"
+[input]
+method = "kaplan_meier_central"
+[input.kwargs]
+time_column_name = "Survival.time"
+censor_column_name = "deadstatus.event"
+organizations_to_include = [1, 2, 3]
+organizations = [2]
+collaboration = 1
+databases = [ { label = "default" } ]
+
+[average]
+image = "ghcr.io/mdw-nl/v6-average-py:v1.0.1"
+name = "demo-average"
+description = "Average dry-run"
+[input]
+method = "central_average"
+[input.kwargs]
+column_name = ["age"]
+org_ids = [1, 2, 3]
+organizations = [2]
+collaboration = 1
+databases = [ { label = "default" } ]

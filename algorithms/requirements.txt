@@ -1,0 +1,2 @@
+dynaconf==3.2.7
+pydantic==4.12.2
