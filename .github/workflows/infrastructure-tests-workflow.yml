@@ -1,0 +1,36 @@
+name: Infrastructure Test
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      python_version:
+        required: true
+        type: string
+      vantage6_version:
+        required: true
+        type: string
+    # secrets:
+    #   INFRA_TOKEN:
+    #     required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Infra Repo
+        uses: actions/checkout@v3
+
+      - name: Run Infrastructure Tests
+        working-directory: infrastructure_tests
+        run: |
+          echo "Running infrastructure tests for environment: ${{ inputs.environment }}"
+          echo "Using Python version: ${{ inputs.python_version }}"
+          echo "Using vantage6 version: ${{ inputs.vantage6_version }}"
+          for script in *.sh; do
+            echo "Running test script: $script"
+            chmod +x "$script"
+            ./"$script"
+          done
