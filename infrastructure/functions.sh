@@ -59,7 +59,7 @@ ensure_command() {
 
 init_config_defaults() {
   PYTHON_INTERPRETER="${PYTHON_INTERPRETER:-python3.12}"
-  VERSION_VANTAGE6="${VERSION_VANTAGE6:-4.8.2}"
+  VERSION_VANTAGE6="${VERSION_VANTAGE6:-4.13.3}"
   ENVIRONMENT="${ENVIRONMENT:-DEV}"
 
   VENV_PATH="$(expand_tilde "${VENV_PATH:-./venv}")"

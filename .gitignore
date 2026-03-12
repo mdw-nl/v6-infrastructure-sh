@@ -8,6 +8,7 @@ __pycache__/
 # Virtualenvs
 venv/
 .venv/
+.venvs/
 infrastructure/venv/
 infrastructure/.venv/
 
