@@ -66,16 +66,13 @@ If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
 `infra.sh up` always generates an `entities.generated.yaml` and uploads it into
 the server container (`vserver-local import ...`).
 
-Generated users now receive explicit roles through `GENERATED_USER_ROLES` in
-`infrastructure/config.env` (default: `Researcher`). Use comma-separated role
-names when needed, for example:
+The generated entities currently do not set explicit user roles. On
+vantage6 `4.13.3` in this harness, imported org users receive an
+organization-scoped `super` role by default (verified from the server DB).
 
-```bash
-GENERATED_USER_ROLES="Researcher,Organization Admin"
-```
-
-Without a task-creation role (e.g. `Researcher`), users can authenticate but
-cannot create algorithm tasks.
+If you see permission errors on task creation (`You lack the permission to do that!`),
+it is usually stale local server state. Run `infra.sh down`, clear local server DB
+state, and run `infra.sh up` again.
 
 ## Local image registry
 

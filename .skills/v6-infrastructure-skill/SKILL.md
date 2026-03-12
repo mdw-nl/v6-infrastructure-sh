@@ -54,10 +54,14 @@ ENVIRONMENT=CI ./infra.sh up
 
 ## Rolesets in `entities.yaml`
 
-When using generated entities, ensure imported users have a role that can
-create tasks in the collaboration (at minimum `Researcher`). If users can log
-in but receive `You lack the permission to do that!` on task creation, verify
-the entities role mapping before rerunning `infra.sh up`.
+When using this harness-generated entities, explicit user roles are not set in
+the YAML. On vantage6 `4.13.3` the import flow assigns organization-scoped
+`super` roles to imported org users by default.
+
+If users can authenticate but receive `You lack the permission to do that!`
+when creating tasks, first suspect stale server state and recreate infra
+(`infra.sh down` + clean local state + `infra.sh up`) before changing role
+assumptions.
 
 ## Local registry for custom images
 
