@@ -22,6 +22,8 @@ organizations:
     firstname: MyAlpha
     lastname: AlphaLastName
     password: alpha-password 
+    roles:
+    - Researcher
   zipcode: 1234AB
 - name: beta
   address1: betastreet 42
@@ -35,6 +37,8 @@ organizations:
     firstname: BetaName
     lastname: BetaSurname
     password: beta-password
+    roles:
+    - Researcher
   zipcode: 1234AB
 - name: gamma
   address1: gamma 42
@@ -48,4 +52,6 @@ organizations:
     firstname: GammaName
     lastname: GammaSurname
     password: gamma-password
+    roles:
+    - Researcher
   zipcode: 1234AB

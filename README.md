@@ -61,6 +61,35 @@ beta|<api_key>|postgresql://user:pass@db:5432/demo|sql|warehouse
 
 If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
 
+## Entities and roles
+
+`infra.sh up` always generates an `entities.generated.yaml` and uploads it into
+the server container (`vserver-local import ...`).
+
+Generated users now receive explicit roles through `GENERATED_USER_ROLES` in
+`infrastructure/config.env` (default: `Researcher`). Use comma-separated role
+names when needed, for example:
+
+```bash
+GENERATED_USER_ROLES="Researcher,Organization Admin"
+```
+
+Without a task-creation role (e.g. `Researcher`), users can authenticate but
+cannot create algorithm tasks.
+
+## Local image registry
+
+If nodes report `non-existing Docker image`, use a local registry and submit
+tasks with a registry-backed image reference:
+
+```bash
+docker run -d --restart unless-stopped -p 5000:5000 --name v6-local-registry registry:2
+docker tag local/v6-sklearn-linear-py:dev localhost:5000/v6-sklearn-linear-py:dev
+docker push localhost:5000/v6-sklearn-linear-py:dev
+```
+
+Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
+
 ## Notes
 
 - Docker daemon must be available before running setup/test.

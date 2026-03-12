@@ -93,6 +93,7 @@ init_config_defaults() {
   UI_ENABLED="${UI_ENABLED:-true}"
   UI_PORT="${UI_PORT:-80}"
   UI_URL="${UI_URL:-http://localhost}"
+  GENERATED_USER_ROLES="${GENERATED_USER_ROLES:-Researcher}"
 
   COLLABORATION_NAME="${COLLABORATION_NAME:-v6-demo}"
 }
@@ -248,8 +249,12 @@ prepare_runtime_dirs() {
 generate_entities_file() {
   local output_file="$ENTITIES_FILE"
   local output_dir
+  local configured_roles role
+  local -a roles_array
   output_dir="$(dirname "$output_file")"
   mkdir -p "$output_dir"
+  configured_roles="$(trim "${GENERATED_USER_ROLES:-Researcher}")"
+  [ -n "$configured_roles" ] || configured_roles="Researcher"
 
   {
     echo "collaborations:"
@@ -283,6 +288,13 @@ generate_entities_file() {
       echo "    firstname: ${name}"
       echo "    lastname: User"
       echo "    password: ${name}-password"
+      echo "    roles:"
+      IFS=',' read -r -a roles_array <<< "$configured_roles"
+      for role in "${roles_array[@]}"; do
+        role="$(trim "$role")"
+        [ -n "$role" ] || continue
+        echo "      - $role"
+      done
       echo "  zipcode: '0000AA'"
     done
   } > "$output_file"
@@ -384,7 +396,7 @@ start_nodes() {
     build_node_config "$node_name" "$api_key" "$db_uri" "$db_type" "$db_label" "$node_config_file"
 
     log "Starting node '$node_name'"
-    v6 node start --user -c "$node_config_file"
+    v6 node start --user -c "$node_config_file" --image "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
   done
 }
 

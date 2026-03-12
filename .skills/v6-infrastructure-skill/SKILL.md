@@ -52,6 +52,26 @@ ENVIRONMENT=CI ./infra.sh up
 ./infra.sh down
 ```
 
+## Rolesets in `entities.yaml`
+
+When using generated entities, ensure imported users have a role that can
+create tasks in the collaboration (at minimum `Researcher`). If users can log
+in but receive `You lack the permission to do that!` on task creation, verify
+the entities role mapping before rerunning `infra.sh up`.
+
+## Local registry for custom images
+
+If tasks stay in `non-existing Docker image`, publish the image to a reachable
+local registry and reference that image in task payloads:
+
+```bash
+docker run -d --restart unless-stopped -p 5000:5000 --name v6-local-registry registry:2
+docker tag <local-image>:<tag> localhost:5000/<local-image>:<tag>
+docker push localhost:5000/<local-image>:<tag>
+```
+
+Then use `localhost:5000/<local-image>:<tag>` as the task `image`.
+
 ## GitHub Actions workflow pattern
 
 Use `actions/checkout` twice: once for the algorithm repo and once for infra harness at pinned SHA.
