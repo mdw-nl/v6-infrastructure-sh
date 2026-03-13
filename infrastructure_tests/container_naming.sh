@@ -1,27 +1,22 @@
 #!/bin/bash
 
-echo "Verifying vantage6 containers..."
+set -euo pipefail
 
-# Put the exact container names you expect in an array
-EXPECTED_CONTAINERS=(
-  # "vantage6-demoserver-user-server" This container can either be named vantage6-demoserver-user-server or vantage6-demoserver-user-ServerType.V6SERVER due to a bug in the vantage6 codebase
-  "vantage6-alpha-user"
-  "vantage6-beta-user"
-  "vantage6-gamma-user"
-  "vantage6-ui"
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infrastructure"
 
-# Get the names of all currently running containers
-RUNNING_CONTAINERS=$(docker ps --format "{{.Names}}")
+cd "$INFRA_DIR"
+source ./config.env
+source ./functions.sh
 
-# For each expected container, ensure it's present
-for NAME in "${EXPECTED_CONTAINERS[@]}"; do
-  if echo "$RUNNING_CONTAINERS" | grep -q "^$NAME\$"; then
-    echo "Found container: $NAME"
-  else
-    echo "Error: Missing container: $NAME"
-    exit 1
-  fi
-done
+init_config_defaults
+load_node_specs
 
-echo "All vantage6 containers are present and running!"
+echo "Verifying expected container names for this infrastructure config..."
+
+if check_container_presence; then
+  echo "All expected containers are present and running."
+else
+  echo "Error: One or more expected containers are missing."
+  exit 1
+fi

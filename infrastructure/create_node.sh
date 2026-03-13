@@ -1,69 +1,46 @@
 #!/bin/bash
 
-# Usage: create_node.sh <node_name> <api_key> <algo_data_directory> <port> <vantage6_version> <docker_registry> <server_url> <venv_path>
+set -e
 
-# Arguments
-NODE_NAME=$1
-API_KEY=$2
-ALGO_DATA_DIRECTORY=$3
-PORT=$4
-VANTAGE6_VERSION=$5
-DOCKER_REGISTRY=$6
-SERVER_URL=${SERVER_URL:-"http://host.docker.internal"}
-VENV_PATH=${VENV_PATH:-"./venv"}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
+source ./config.env
+source ./functions.sh
+init_config_defaults
 
-# Check if all arguments are provided
-if [ -z "$NODE_NAME" ] || [ -z "$API_KEY" ] || [ -z "$ALGO_DATA_DIRECTORY" ] || [ -z "$PORT" ] || [ -z "$VANTAGE6_VERSION" ] || [ -z "$DOCKER_REGISTRY" ] || [ -z "$SERVER_URL" ] || [ -z "$VENV_PATH" ]; then
-    echo "Usage: $0 <node_name> <api_key> <algo_data_directory> <port> <vantage6_version> <docker_registry> <server_url> <venv_path>"
-    exit 1
+NODE_NAME="${1:-}"
+API_KEY="${2:-}"
+DB_URI="${3:-}"
+DB_TYPE="${4:-csv}"
+DB_LABEL="${5:-default}"
+
+if [ -z "$NODE_NAME" ] || [ -z "$API_KEY" ]; then
+  cat <<USAGE >&2
+Usage: ./create_node.sh <node_name> <api_key> [db_uri] [db_type] [db_label]
+USAGE
+  exit 1
 fi
 
-# Create node configuration file
-cat <<EOL > ${NODE_NAME}.yaml
-api_key: $API_KEY
-api_path: /api
-databases:
-  - label: default
-    type: csv
-    uri: ${ALGO_DATA_DIRECTORY}/${NODE_NAME}.csv
-encryption:
-  enabled: false
-  private_key: ''
-logging:
-  backup_count: 5
-  datefmt: '%Y-%m-%d %H:%M:%S'
-  format: '%(asctime)s - %(name)-14s - %(levelname)-8s - %(message)s'
-  level: DEBUG
-  loggers:
-    - level: warning
-      name: urllib3
-    - level: warning
-      name: requests
-    - level: warning
-      name: engineio.client
-    - level: warning
-      name: docker.utils.config
-    - level: warning
-      name: docker.auth
-  max_size: 1024
-  use_console: true
-port: '$PORT'
-server_url: $SERVER_URL
-task_dir: ./${NODE_NAME}/tasks
-node_extra_hosts:
-  host.docker.internal: host-gateway
-EOL
+if [ -z "$DB_URI" ]; then
+  DB_URI="$DATA_DIR_DEFAULT/$NODE_NAME.csv"
+fi
 
-# Start the node
-echo "Starting node '$NODE_NAME'..."
+if ! looks_like_uri "$DB_URI"; then
+  DB_URI="$(abspath_if_local_path "$DB_URI")"
+fi
 
-# Activate the virtual environment
+prepare_runtime_dirs
+NODE_CONFIG_FILE="$GENERATED_DIR/nodes/${NODE_NAME}.yaml"
+build_node_config "$NODE_NAME" "$API_KEY" "$DB_URI" "$DB_TYPE" "$DB_LABEL" "$NODE_CONFIG_FILE"
+
 if [ ! -d "$VENV_PATH" ]; then
-    echo "Error: Virtual environment at '$VENV_PATH' does not exist."
-    exit 1
+  fail "Virtual environment '$VENV_PATH' does not exist. Run ./setup.sh first."
 fi
+
+# shellcheck source=/dev/null
 . "$VENV_PATH/bin/activate"
+v6 node start --user -c "$NODE_CONFIG_FILE"
+deactivate
 
-
-v6 node start --user -c ${NODE_NAME}.yaml #--image "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
+log "Node '$NODE_NAME' started using config '$NODE_CONFIG_FILE'"

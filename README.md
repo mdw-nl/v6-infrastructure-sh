@@ -1,37 +1,94 @@
-# Vantage6 Demo Network Infrastructure
+# Vantage6 Local Infrastructure Harness
 
-This repository provides a demo setup for running a [vantage6](https://vantage6.ai/) server, nodes, and UI locally for testing and development.
+This repository provides a reusable, config-driven local vantage6 infrastructure for any algorithm package and data layout.
 
-## Getting Started
+## What changed
 
-1. **Clone** this repository.
-2. **Check** or **edit** `config.env` to set any desired defaults (e.g., vantage6 version, Docker registry, UI port, etc.).
-3. **Run** the setup script:
-    ```bash
-    # Development usage (won't stop on errors, opens browser)
-    ENVIRONMENT=DEV ./setup.sh
-    ```
-   or
-    ```bash
-    # CI usage (stops on errors, no browser launch)
-    ENVIRONMENT=CI ./setup.sh
-    ```
-    If you omit `ENVIRONMENT=...`, it falls back to whatever is in `config.env`.
+The infrastructure is now driven by:
 
-4. **Verify** containers are running:
-    ```bash
-    docker ps
-    ```
-    You should see the vantage6 server, nodes, and UI container.
+- `infrastructure/config.env`: runtime defaults (Python version, v6 version, server/UI settings, paths)
+- `infrastructure/nodes.env`: node specs (`name|api_key|db_uri|db_type|db_label`)
+- generated runtime artifacts in `infrastructure/generated/`
 
-5. **Interact** with vantage6 (e.g., run an algorithm). The vantage6 UI can be accessed at http://localhost (configurable in `config.env`).
+No hardcoded `alpha/beta/gamma` logic is required anymore. Any number of nodes can be used.
 
-6. **Stop** and **remove** all containers:
-    ```bash
-    # Use the same ENVIRONMENT mode you started with, if desired
-    ENVIRONMENT=DEV ./shutdown.sh
-    ```
-    This tears down the vantage6 environment and cleans up leftover files.
+## Quick start
 
+1. Edit `infrastructure/config.env` and `infrastructure/nodes.env`.
+2. Run preflight checks:
 
+```bash
+cd infrastructure
+./infra.sh preflight
+```
 
+3. Start infrastructure:
+
+```bash
+cd infrastructure
+ENVIRONMENT=DEV ./infra.sh up
+```
+
+4. Run smoke tests:
+
+```bash
+cd infrastructure
+./infra.sh test
+```
+
+5. Tear down:
+
+```bash
+cd infrastructure
+./infra.sh down
+```
+
+## CI compatibility
+
+Legacy entrypoints remain and map to the same flow:
+
+- `infrastructure/setup.sh`
+- `infrastructure/shutdown.sh`
+
+## Node spec examples
+
+`infrastructure/nodes.env` supports mixed backends:
+
+```text
+alpha|<api_key>|../data/alpha.csv|csv|default
+beta|<api_key>|postgresql://user:pass@db:5432/demo|sql|warehouse
+```
+
+If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
+
+## Entities and roles
+
+`infra.sh up` always generates an `entities.generated.yaml` and uploads it into
+the server container (`vserver-local import ...`).
+
+The generated entities currently do not set explicit user roles. On
+vantage6 `4.13.3` in this harness, imported org users receive an
+organization-scoped `super` role by default (verified from the server DB).
+
+If you see permission errors on task creation (`You lack the permission to do that!`),
+it is usually stale local server state. Run `infra.sh down`, clear local server DB
+state, and run `infra.sh up` again.
+
+## Local image registry
+
+If nodes report `non-existing Docker image`, use a local registry and submit
+tasks with a registry-backed image reference:
+
+```bash
+docker run -d --restart unless-stopped -p 5000:5000 --name v6-local-registry registry:2
+docker tag local/v6-sklearn-linear-py:dev localhost:5000/v6-sklearn-linear-py:dev
+docker push localhost:5000/v6-sklearn-linear-py:dev
+```
+
+Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
+
+## Notes
+
+- Docker daemon must be available before running setup/test.
+- `STRICT_DATA_CHECKS=true` enforces local CSV existence checks.
+- UI can be disabled with `UI_ENABLED=false`.

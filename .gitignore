@@ -1,15 +1,26 @@
-venv/
+# Python
 __pycache__/
-*.pyc
-*.yaml.bak
-*.ipynb
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
 
-# other 
+# Virtualenvs
+venv/
+.venv/
+.venvs/
+infrastructure/venv/
+infrastructure/.venv/
+
+# Generated runtime artifacts
+infrastructure/generated/
+infrastructure/*.sqlite
+infrastructure/*.db
+infrastructure/*.log
+
+# Temporary/editor
 .DS_Store
 .psi-ignore
 report.md
-
-# node config files
-alpha.yaml
-beta.yaml
-gamma.yaml
+.vscode/
+.idea/

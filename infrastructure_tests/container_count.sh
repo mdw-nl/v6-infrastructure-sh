@@ -1,21 +1,46 @@
 #!/bin/bash
 
-echo "Verifying vantage6 containers..."
+set -euo pipefail
 
-# Count how many vantage6 containers are currently running
-RUNNING_COUNT=$(docker ps --format '{{.Names}}' | grep '^vantage6-' | wc -l)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infrastructure"
 
-# We expect exactly 5 vantage6 containers:
-#   - vantage6-demoserver-user-server
-#   - vantage6-alpha-user
-#   - vantage6-beta-user
-#   - vantage6-gamma-user
-#   - vantage6-ui
-EXPECTED_COUNT=5
+cd "$INFRA_DIR"
+source ./config.env
+source ./functions.sh
 
-if [ "$RUNNING_COUNT" -eq "$EXPECTED_COUNT" ]; then
-  echo "All $EXPECTED_COUNT vantage6 containers are running!"
+init_config_defaults
+load_node_specs
+
+echo "Verifying expected container count for this infrastructure config..."
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Error: Docker daemon is not reachable."
+  exit 1
+fi
+
+EXPECTED_COUNT="$(expected_container_count)"
+ACTUAL_COUNT=0
+
+RUNNING="$(docker ps --format '{{.Names}}')"
+
+if echo "$RUNNING" | grep -Eq "^vantage6-${SERVER_NAME}-user"; then
+  ACTUAL_COUNT=$((ACTUAL_COUNT + 1))
+fi
+
+for node_name in "${NODE_NAMES[@]}"; do
+  if echo "$RUNNING" | grep -Fxq "vantage6-${node_name}-user"; then
+    ACTUAL_COUNT=$((ACTUAL_COUNT + 1))
+  fi
+done
+
+if parse_bool "$UI_ENABLED" && echo "$RUNNING" | grep -Fxq "vantage6-ui"; then
+  ACTUAL_COUNT=$((ACTUAL_COUNT + 1))
+fi
+
+if [ "$ACTUAL_COUNT" -eq "$EXPECTED_COUNT" ]; then
+  echo "Found all expected containers ($ACTUAL_COUNT/$EXPECTED_COUNT)."
 else
-  echo "Error: Expected $EXPECTED_COUNT vantage6 containers, but found $RUNNING_COUNT."
+  echo "Error: Expected $EXPECTED_COUNT containers but found $ACTUAL_COUNT."
   exit 1
 fi
