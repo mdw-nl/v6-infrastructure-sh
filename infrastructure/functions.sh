@@ -59,13 +59,19 @@ ensure_command() {
 
 init_config_defaults() {
   PYTHON_INTERPRETER="${PYTHON_INTERPRETER:-python3.12}"
-  VERSION_VANTAGE6="${VERSION_VANTAGE6:-4.13.3}"
+  VERSION_VANTAGE6="${VERSION_VANTAGE6:-4.14.0}"
   ENVIRONMENT="${ENVIRONMENT:-DEV}"
 
   VENV_PATH="$(expand_tilde "${VENV_PATH:-./venv}")"
   REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements.txt}"
 
-  DOCKER_REGISTRY="${DOCKER_REGISTRY:-harbor2.vantage6.ai/infrastructure}"
+  DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/mdw-nl/vantage6/infrastructure}"
+  V6_SERVER_IMAGE_NAME="${V6_SERVER_IMAGE_NAME:-server-lite}"
+  V6_SERVER_IMAGE_TAG="${V6_SERVER_IMAGE_TAG:-4.14.0-rc8}"
+  V6_NODE_IMAGE_NAME="${V6_NODE_IMAGE_NAME:-node-lite}"
+  V6_NODE_IMAGE_TAG="${V6_NODE_IMAGE_TAG:-4.14.0-rc8}"
+  V6_UI_IMAGE_NAME="${V6_UI_IMAGE_NAME:-ui}"
+  V6_UI_IMAGE_TAG="${V6_UI_IMAGE_TAG:-4.14.0-rc8}"
   SERVER_URL="${SERVER_URL:-http://localhost:5070}"
   API_PATH="${API_PATH:-/api}"
 
@@ -94,6 +100,18 @@ init_config_defaults() {
   UI_PORT="${UI_PORT:-80}"
   UI_URL="${UI_URL:-http://localhost}"
   COLLABORATION_NAME="${COLLABORATION_NAME:-v6-demo}"
+}
+
+server_image_ref() {
+  printf '%s/%s:%s' "$DOCKER_REGISTRY" "$V6_SERVER_IMAGE_NAME" "$V6_SERVER_IMAGE_TAG"
+}
+
+node_image_ref() {
+  printf '%s/%s:%s' "$DOCKER_REGISTRY" "$V6_NODE_IMAGE_NAME" "$V6_NODE_IMAGE_TAG"
+}
+
+ui_image_ref() {
+  printf '%s/%s:%s' "$DOCKER_REGISTRY" "$V6_UI_IMAGE_NAME" "$V6_UI_IMAGE_TAG"
 }
 
 setup_venv() {
@@ -136,12 +154,27 @@ install_dependencies() {
 pull_docker_images() {
   ensure_command docker
 
-  log "Pulling server and node images from '$DOCKER_REGISTRY'"
-  docker pull "$DOCKER_REGISTRY/server:$VERSION_VANTAGE6"
-  docker pull "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
+  if docker image inspect "$(server_image_ref)" >/dev/null 2>&1; then
+    log "Using locally available server image '$(server_image_ref)'"
+  else
+    log "Pulling server image '$(server_image_ref)'"
+    docker pull "$(server_image_ref)"
+  fi
+
+  if docker image inspect "$(node_image_ref)" >/dev/null 2>&1; then
+    log "Using locally available node image '$(node_image_ref)'"
+  else
+    log "Pulling node image '$(node_image_ref)'"
+    docker pull "$(node_image_ref)"
+  fi
 
   if parse_bool "$UI_ENABLED"; then
-    docker pull "$DOCKER_REGISTRY/ui"
+    if docker image inspect "$(ui_image_ref)" >/dev/null 2>&1; then
+      log "Using locally available UI image '$(ui_image_ref)'"
+    else
+      log "Pulling UI image '$(ui_image_ref)'"
+      docker pull "$(ui_image_ref)"
+    fi
   fi
 }
 
@@ -296,6 +329,8 @@ build_node_config() {
   local db_type="$4"
   local db_label="$5"
   local output_file="$6"
+  local node_image
+  node_image="$(node_image_ref)"
 
   cat > "$output_file" <<EOL
 api_key: $api_key
@@ -304,9 +339,14 @@ databases:
   - label: $db_label
     type: $db_type
     uri: $db_uri
+    mount_mode: ro
 encryption:
   enabled: false
   private_key: ''
+policies:
+  allowed_algorithms: []
+images:
+  node: $node_image
 logging:
   backup_count: 5
   datefmt: '%Y-%m-%d %H:%M:%S'
@@ -328,6 +368,11 @@ logging:
 port: '5070'
 server_url: $SERVER_URL
 task_dir: ./$node_name/tasks
+share_config: false
+share_algorithm_logs: false
+run_context_file: true
+prometheus:
+  enabled: false
 node_extra_hosts:
   host.docker.internal: host-gateway
 EOL
@@ -335,7 +380,7 @@ EOL
 
 start_server() {
   log "Starting server '$SERVER_NAME' using config '$SERVER_CONFIG'"
-  v6 server start --user -c "$SERVER_CONFIG" --image "$DOCKER_REGISTRY/server:$VERSION_VANTAGE6"
+  v6 server start --user -c "$SERVER_CONFIG" --image "$(server_image_ref)"
 }
 
 import_entities() {
@@ -383,7 +428,7 @@ start_nodes() {
     build_node_config "$node_name" "$api_key" "$db_uri" "$db_type" "$db_label" "$node_config_file"
 
     log "Starting node '$node_name'"
-    v6 node start --user -c "$node_config_file" --image "$DOCKER_REGISTRY/node:$VERSION_VANTAGE6"
+    v6 node start --user -c "$node_config_file" --image "$(node_image_ref)"
   done
 }
 
@@ -401,7 +446,7 @@ start_ui() {
     -p "$UI_PORT:$UI_PORT" \
     -e "SERVER_URL=$SERVER_URL" \
     -e "API_PATH=$API_PATH" \
-    "$DOCKER_REGISTRY/ui"
+    "$(ui_image_ref)"
 }
 
 open_browser() {
@@ -427,6 +472,14 @@ preflight_checks() {
   [ -f "$NODES_CONFIG" ] || fail "Node spec file not found: $NODES_CONFIG"
 
   docker info >/dev/null 2>&1 || fail "Docker daemon is not reachable"
+
+  case "$(uname -m)" in
+    x86_64|amd64)
+      ;;
+    *)
+      warn "This host is not amd64. Published GHCR Vantage6 infra images are only signoff-tested on amd64; use amd64 CI for authoritative validation."
+      ;;
+  esac
 }
 
 stop_nodes() {
