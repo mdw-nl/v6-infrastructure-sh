@@ -13,6 +13,8 @@ Use this skill to run reusable vantage6 infra tests for any algorithm package wi
 - The algorithm repo does not vendor `v6-infrastructure-sh`.
 - You want reproducible CI with infra pinned to a commit SHA.
 
+Use this skill only after local package/runtime validation is already green. It is not a substitute for import-safety checks or local `run_context` smoke tests.
+
 ## Required inputs
 
 Keep these files in the algorithm repo:
@@ -35,9 +37,37 @@ Recommended placeholders for humans and LLM agents:
 export PYTHON_INTERPRETER="${PYTHON_INTERPRETER:-python3.12}"
 export REGISTRY_PORT="${REGISTRY_PORT:-5001}"  # macOS often prefers 5001 or 50000
 export UI_ENABLED="${UI_ENABLED:-false}"
+export VERSION_VANTAGE6="${VERSION_VANTAGE6:-4.14.0}"
+export DOCKER_REGISTRY="${DOCKER_REGISTRY:-localhost:${REGISTRY_PORT}/v6infra}"
+export V6_SERVER_SOURCE_IMAGE="${V6_SERVER_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/server-lite:4.14.0-rc8}"
+export V6_NODE_SOURCE_IMAGE="${V6_NODE_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/node-lite:4.14.0-rc8}"
+export V6_UI_SOURCE_IMAGE="${V6_UI_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/ui:4.14.0-rc8}"
 ```
 
+When writing real node configs, prefer explicit image references inside the YAML instead of relying only on shell defaults. At minimum, keep these fields visible in the node config:
+
+```yaml
+images:
+  node: ghcr.io/mdw-nl/vantage6/infrastructure/node-lite@sha256:<digest>
+
+run_context_file: true
+share_config: false
+share_algorithm_logs: false
+prometheus:
+  enabled: false
+```
+
+For production-like configs, also keep `policies.allowed_algorithms` and `databases[*].mount_mode` explicit. This makes review easier and avoids hidden runtime drift between shell env and node behavior.
+
 ## Local workflow
+
+Recommended execution order:
+
+1. Clean temp venv: verify package-root imports and minimal unit tests.
+2. Local container smoke: verify `RUN_CONTEXT_FILE` execution without infra.
+3. Infra lane: only then run `v6-infrastructure-sh`.
+
+If step 1 fails, do not continue into infra. Recent STRATA-FIT failures were usually caused by package-root imports pulling runtime-only code, not by the infra harness itself.
 
 1. Clone infra harness and pin SHA.
 2. Copy algorithm test configs into infra folder.
@@ -70,6 +100,19 @@ rm -rf "$HOME/.local/share/vantage6/server/demoserver"
 rm -rf "$HOME/.local/share/vantage6/node/"*
 PYTHON_INTERPRETER="${PYTHON_INTERPRETER:-python3.12}" ENVIRONMENT=CI UI_ENABLED="${UI_ENABLED:-false}" ./infra.sh up
 ```
+
+When debugging task failures, attach to the master org node container first and inspect the traceback there before changing infra configuration. This is the fastest way to separate container/package breakage from harness breakage.
+
+## Registry migration note
+
+Harbor is no longer a safe or reliable default for Vantage6 infrastructure images.
+
+- Vantage6 publicly reported unauthorized access to the Harbor registry on April 2, 2026.
+- On May 11, 2026, Vantage6 announced that infrastructure images had moved to GitHub Container Registry and Harbor would be discontinued.
+- For local infra runs, a practical pattern is:
+  1. pull `server-lite` / `node-lite` / `ui` from GHCR
+  2. retag and push them into a local disposable registry
+  3. point `DOCKER_REGISTRY` at that local mirror for `infra.sh`
 
 ## Rolesets in `entities.yaml`
 
@@ -109,6 +152,20 @@ For portable scripts, avoid hardcoded host-specific paths; prefer env vars and p
 
 - Avoid `vantage6-tools` in requirements; use `vantage6-client` and `vantage6-algorithm-tools`.
 - Keep smoke scripts non-interactive (`MPLBACKEND=Agg` if plots are produced).
+- Harbor is deprecated for infra-image sourcing. Prefer GHCR-backed `server-lite` / `node-lite` / `ui` images or a local mirror of them.
+- Keep the Python package version (`VERSION_VANTAGE6`, e.g. `4.14.0`) separate from the Docker image source tags you mirror (e.g. `4.14.0-rc8`).
+- Treat amd64 CI as the authoritative signoff environment for infra-backed validation.
+- On ARM developer machines, assume the replacement GHCR infra images may require `--platform linux/amd64` when mirroring them locally.
+- For standalone-runtime migrations, prefer deterministic install order:
+  1. stable primitives first
+  2. git/tar algorithm dependencies with `--no-deps`
+  3. target repo install with `--no-deps`
+- Do not assume the local workspace repo matches the published pin consumed in tests. Validate the exact installed artifact in a fresh temp venv.
+- Avoid reusing a repo-local `.venv` after interrupted pip/self-upgrade failures; create a fresh temp venv instead.
+- Do not give `infra.sh` a shared project virtualenv. It upgrades and installs into the environment it is given, so use a disposable `/tmp/...` venv for infra runs.
+- If the harness is not checked out as a sibling repo, set `INFRA_DIR` explicitly instead of relying on relative-path defaults.
+- If a runtime smoke reports duplicate `run_context` entrypoints after an editable install, check for local `.egg-info` plus installed metadata overlap before changing code.
+- For Docker/container smoke, ensure the `RUN_CONTEXT_FILE` input URIs are valid inside the container namespace, not only on the host.
 
 ## GitHub Actions workflow pattern
 
@@ -156,8 +213,11 @@ Use `actions/checkout` twice: once for the algorithm repo and once for infra har
 ## Failure triage
 
 1. `preflight` fails: Docker/runtime or missing config paths.
-2. `up` fails: server/node startup config mismatch.
-3. `run_algo_smoke.sh` fails: algorithm/package/runtime issue.
-4. `infra.sh test` fails: verify `UI_ENABLED`/`NODES_CONFIG` match how infra was started.
-5. Task status `non-existing Docker image`: use local registry with configurable port and retag image.
-6. `down` fails: teardown residue; rerun and inspect remaining containers.
+2. Local import gate failed before infra: fix package-root imports and mixed runtime/library boundaries first.
+3. Local container `run_context` smoke failed: fix the algorithm/container contract before infra.
+4. `up` fails: server/node startup config mismatch.
+5. `run_algo_smoke.sh` fails: algorithm/package/runtime issue. Inspect the master org node container traceback first.
+6. `infra.sh test` fails: verify `UI_ENABLED`/`NODES_CONFIG` match how infra was started.
+7. Task status `non-existing Docker image`: use local registry with configurable port and retag image.
+8. Harbor server/node image pull fails: Harbor is retired for this use; switch to GHCR `server-lite` / `node-lite` / `ui` images or a local mirror of them.
+9. `down` fails: teardown residue; rerun and inspect remaining containers.

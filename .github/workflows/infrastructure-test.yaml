@@ -1,43 +1,53 @@
 name: Vantage6 Infrastructure Test
 
 on:
-
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   vantage6-demo:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ENVIRONMENT: CI
+      UI_ENABLED: false
+      PYTHON_INTERPRETER: python3.12
+      VERSION_VANTAGE6: 4.14.0
+
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - name: Prepare and run setup
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Preflight
         run: |
           cd infrastructure
-          chmod +x setup.sh shutdown.sh
-          # (Optional) Show scripts for debugging
-          # cat setup.sh
-          ENVIRONMENT=CI ./setup.sh
+          chmod +x infra.sh setup.sh shutdown.sh
+          ./infra.sh preflight
 
-      - name: Check that containers are running
-        run: docker ps
+      - name: Start infrastructure
+        run: |
+          cd infrastructure
+          ./infra.sh up
 
       - name: Infrastructure Tests
         run: |
-          cd infrastructure_tests
-          for script in *.sh; do
-            echo "Running test script: $script"
-            chmod +x "$script"
-            ./"$script"
-          done
+          cd infrastructure
+          ./infra.sh test
 
       - name: Tear down vantage6
+        if: always()
         run: |
           cd infrastructure
-          ENVIRONMENT=CI ./shutdown.sh
+          ./infra.sh down
 
       - name: Confirm containers are removed
+        if: always()
         run: docker ps -a
