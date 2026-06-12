@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: [ '3.10', '3.11', '3.12', '3.13' ]
-        vantage6-version: [ '4.8.0', '4.8.1', '4.8.2', 'latest' ]
+        vantage6-version: [ 'latest' ]
 
     runs-on: ubuntu-latest
 
@@ -24,7 +24,7 @@ jobs:
 
       # 2) Set up Python environment for the chosen python-version
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v4 #TODO: pin the action's digests
         with:
           python-version: ${{ matrix.python-version }}
 
