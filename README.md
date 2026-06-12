@@ -2,6 +2,14 @@
 
 This repository provides a reusable, config-driven local vantage6 infrastructure for any algorithm package and data layout.
 
+The default runtime now assumes GitHub Container Registry images:
+
+- `ghcr.io/mdw-nl/vantage6/infrastructure/server-lite`
+- `ghcr.io/mdw-nl/vantage6/infrastructure/node-lite`
+- `ghcr.io/mdw-nl/vantage6/infrastructure/ui`
+
+Harbor is intentionally no longer part of the default path.
+
 ## What changed
 
 The infrastructure is now driven by:
@@ -50,6 +58,8 @@ Legacy entrypoints remain and map to the same flow:
 - `infrastructure/setup.sh`
 - `infrastructure/shutdown.sh`
 
+The authoritative smoke environment is `ubuntu-latest` or another amd64 host. ARM developer machines are supported on a best-effort basis only, as the published GHCR infra images may not ship native arm64 variants.
+
 ## Node spec examples
 
 `infrastructure/nodes.env` supports mixed backends:
@@ -60,6 +70,25 @@ beta|<api_key>|postgresql://user:pass@db:5432/demo|sql|warehouse
 ```
 
 If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
+
+Generated node YAML keeps the runtime-critical fields explicit:
+
+```yaml
+databases:
+  - label: default
+    type: csv
+    uri: /absolute/path/to/data.csv
+    mount_mode: ro
+images:
+  node: ghcr.io/mdw-nl/vantage6/infrastructure/node-lite:4.14.0-rc8
+share_config: false
+share_algorithm_logs: false
+run_context_file: true
+prometheus:
+  enabled: false
+```
+
+For operator-facing configs, prefer digest-pinned image refs.
 
 ## Entities and roles
 
@@ -92,3 +121,7 @@ Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
 - Docker daemon must be available before running setup/test.
 - `STRICT_DATA_CHECKS=true` enforces local CSV existence checks.
 - UI can be disabled with `UI_ENABLED=false`.
+- Recommended workflow is:
+  1. validate the target algorithm repo in a fresh `/tmp` venv
+  2. run a local container smoke for `RUN_CONTEXT_FILE`
+  3. only then use this harness
