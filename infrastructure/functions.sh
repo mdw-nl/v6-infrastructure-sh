@@ -96,6 +96,7 @@ init_config_defaults() {
 
   STRICT_DATA_CHECKS="${STRICT_DATA_CHECKS:-true}"
   CLEAN_LOCAL_STATE="${CLEAN_LOCAL_STATE:-true}"
+  KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
   UI_ENABLED="${UI_ENABLED:-true}"
   UI_PORT="${UI_PORT:-80}"
   UI_URL="${UI_URL:-http://localhost}"
@@ -112,6 +113,34 @@ node_image_ref() {
 
 ui_image_ref() {
   printf '%s/%s:%s' "$DOCKER_REGISTRY" "$V6_UI_IMAGE_NAME" "$V6_UI_IMAGE_TAG"
+}
+
+find_running_server_container_id() {
+  docker ps -qf "label=vantage6-type=server" -f "label=name=$SERVER_NAME" | head -n 1
+}
+
+find_all_server_container_ids() {
+  docker ps -aqf "label=vantage6-type=server" -f "label=name=$SERVER_NAME" | awk 'NF && !seen[$0]++'
+}
+
+report_server_diagnostics() {
+  local container_ids
+  local container_id
+
+  warn "Server '$SERVER_NAME' did not appear as a running container. Collecting diagnostics."
+  docker ps -a --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}' | sed -n '1,120p' >&2 || true
+
+  container_ids="$(find_all_server_container_ids)"
+  if [ -z "$container_ids" ]; then
+    warn "No server container found for server label filters vantage6-type=server and name=$SERVER_NAME"
+    return
+  fi
+
+  for container_id in $container_ids; do
+    warn "Inspecting server container '$container_id'"
+    docker inspect --format 'name={{.Name}} status={{.State.Status}} exit_code={{.State.ExitCode}} error={{.State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}' "$container_id" >&2 || true
+    docker logs "$container_id" >&2 || true
+  done
 }
 
 setup_venv() {
@@ -151,6 +180,22 @@ install_dependencies() {
   log "Using vantage6 version $VERSION_VANTAGE6"
 }
 
+probe_image_runnable_on_host() {
+  local image_ref="$1"
+  local image_label="$2"
+  local probe_output
+
+  case "$(uname -m)" in
+    x86_64|amd64)
+      return
+      ;;
+  esac
+
+  probe_output="$(docker run --rm --entrypoint /bin/sh "$image_ref" -c 'true' 2>&1)" && return
+
+  fail "Local ${image_label} image '$image_ref' is not runnable on host architecture '$(uname -m)'. Docker probe failed with: $probe_output"
+}
+
 pull_docker_images() {
   ensure_command docker
 
@@ -160,6 +205,7 @@ pull_docker_images() {
     log "Pulling server image '$(server_image_ref)'"
     docker pull "$(server_image_ref)"
   fi
+  probe_image_runnable_on_host "$(server_image_ref)" "server"
 
   if docker image inspect "$(node_image_ref)" >/dev/null 2>&1; then
     log "Using locally available node image '$(node_image_ref)'"
@@ -167,6 +213,7 @@ pull_docker_images() {
     log "Pulling node image '$(node_image_ref)'"
     docker pull "$(node_image_ref)"
   fi
+  probe_image_runnable_on_host "$(node_image_ref)" "node"
 
   if parse_bool "$UI_ENABLED"; then
     if docker image inspect "$(ui_image_ref)" >/dev/null 2>&1; then
@@ -175,6 +222,7 @@ pull_docker_images() {
       log "Pulling UI image '$(ui_image_ref)'"
       docker pull "$(ui_image_ref)"
     fi
+    probe_image_runnable_on_host "$(ui_image_ref)" "ui"
   fi
 }
 
@@ -294,6 +342,7 @@ generate_entities_file() {
       echo "  - api_key: ${NODE_API_KEYS[$i]}"
       echo "    name: ${NODE_NAMES[$i]}"
     done
+    echo "  tasks: ['hello-world']"
 
     echo "nodes: []"
     echo "organizations:"
@@ -304,6 +353,9 @@ generate_entities_file() {
       username="${name}-user"
 
       echo "- name: $name"
+      if [ "$i" = "0" ]; then
+        echo "  make_admin: true"
+      fi
       echo "  address1: ${name} street 1"
       echo "  address2: ''"
       echo "  country: Unknown"
@@ -315,6 +367,13 @@ generate_entities_file() {
       echo "    firstname: ${name}"
       echo "    lastname: User"
       echo "    password: ${name}-password"
+      if [ "$i" = "0" ]; then
+        echo "  - email: dev-admin@example.org"
+        echo "    username: dev_admin"
+        echo "    firstname: admin"
+        echo "    lastname: robot"
+        echo "    password: password"
+      fi
       echo "  zipcode: '0000AA'"
     done
   } > "$output_file"
@@ -379,8 +438,14 @@ EOL
 }
 
 start_server() {
+  local keep_flag=()
+  if parse_bool "$KEEP_CONTAINERS"; then
+    keep_flag+=(--keep)
+    log "Container auto-removal disabled (KEEP_CONTAINERS=$KEEP_CONTAINERS)"
+  fi
+
   log "Starting server '$SERVER_NAME' using config '$SERVER_CONFIG'"
-  v6 server start --user -c "$SERVER_CONFIG" --image "$(server_image_ref)"
+  v6 server start --user "${keep_flag[@]}" -c "$SERVER_CONFIG" --image "$(server_image_ref)"
 }
 
 import_entities() {
@@ -389,7 +454,7 @@ import_entities() {
   local delay_seconds=1
 
   while [ "$attempts" -gt 0 ]; do
-    server_container_id="$(docker ps -qf "name=^vantage6-${SERVER_NAME}-user" | head -n 1)"
+    server_container_id="$(find_running_server_container_id)"
     if [ -n "$server_container_id" ]; then
       break
     fi
@@ -397,7 +462,10 @@ import_entities() {
     sleep "$delay_seconds"
   done
 
-  [ -n "$server_container_id" ] || fail "Could not find running server container for '$SERVER_NAME'"
+  if [ -z "$server_container_id" ]; then
+    report_server_diagnostics
+    fail "Could not find running server container for '$SERVER_NAME'"
+  fi
 
   log "Importing entities from '$ENTITIES_FILE'"
   docker cp "$ENTITIES_FILE" "$server_container_id":/entities.yaml
@@ -416,6 +484,11 @@ import_entities() {
 
 start_nodes() {
   local i
+  local keep_flag=()
+  if parse_bool "$KEEP_CONTAINERS"; then
+    keep_flag+=(--keep)
+  fi
+
   for i in "${!NODE_NAMES[@]}"; do
     local node_name api_key db_uri db_type db_label node_config_file
     node_name="${NODE_NAMES[$i]}"
@@ -428,7 +501,7 @@ start_nodes() {
     build_node_config "$node_name" "$api_key" "$db_uri" "$db_type" "$db_label" "$node_config_file"
 
     log "Starting node '$node_name'"
-    v6 node start --user -c "$node_config_file" --image "$(node_image_ref)"
+    v6 node start --user "${keep_flag[@]}" -c "$node_config_file" --image "$(node_image_ref)"
   done
 }
 
@@ -503,7 +576,7 @@ remove_containers() {
   docker rm -f vantage6-ui >/dev/null 2>&1 || true
 
   local server_containers
-  server_containers="$(docker ps -aqf "name=^vantage6-${SERVER_NAME}-user")"
+  server_containers="$(find_all_server_container_ids)"
   if [ -n "$server_containers" ]; then
     docker rm -f $server_containers >/dev/null 2>&1 || true
   fi
@@ -556,8 +629,8 @@ check_container_presence() {
   local running
   running="$(docker ps --format '{{.Names}}')"
 
-  if ! echo "$running" | grep -Eq "^vantage6-${SERVER_NAME}-user"; then
-    warn "Missing server container with prefix 'vantage6-${SERVER_NAME}-user'"
+  if [ -z "$(find_running_server_container_id)" ]; then
+    warn "Missing running server container for label filters vantage6-type=server and name=$SERVER_NAME"
     missing=1
   fi
 
