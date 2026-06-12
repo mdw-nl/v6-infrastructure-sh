@@ -1,68 +1,57 @@
-name: Vantage6 Multi-Version Tests
+name: Vantage6 Compatibility Matrix
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   vantage6-matrix:
-    # We'll test multiple Python + vantage6 versions
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ '3.10', '3.11', '3.12', '3.13' ]
-        vantage6-version: [ 'latest' ]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        vantage6-version: ["4.14.0", "latest"]
 
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ENVIRONMENT: CI
+      UI_ENABLED: false
 
     steps:
-      # 1) Check out repository
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      # 2) Set up Python environment for the chosen python-version
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4 #TODO: pin the action's digests
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
 
-      # 3) Make vantage6-version available to your scripts
-      #    We'll set it as an environment variable so that
-      #    your `config.env` or scripts can pick it up.
       - name: Define vantage6 version
         run: echo "VERSION_VANTAGE6=${{ matrix['vantage6-version'] }}" >> $GITHUB_ENV
 
-      # 4) Move to the infrastructure folder
-      - name: Prepare scripts
+      - name: Preflight
         run: |
-          chmod +x setup.sh shutdown.sh
-          # We'll pass ENVIRONMENT=CI so it doesn't open a browser
-          # and fails on first error.
-          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./setup.sh
+          chmod +x infra.sh setup.sh shutdown.sh
+          PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./infra.sh preflight
         working-directory: infrastructure
 
-      # 5) Verify containers are running
-      - name: Check vantage6 containers
-        run: docker ps
+      - name: Start infrastructure
+        run: |
+          PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./infra.sh up
+        working-directory: infrastructure
 
-      # 6) (Optional) Run your test scripts from infrastructure_tests
       - name: Run infrastructure tests
         run: |
-          for script in *.sh; do
-            echo "Running test script: $script"
-            chmod +x "$script"
-            ./"$script"
-          done
-        working-directory: infrastructure_tests
-
-      # 7) Tear down vantage6
-      - name: Shutdown vantage6
-        run: |
-          ENVIRONMENT=CI VERSION_VANTAGE6=${{ matrix['vantage6-version'] }} PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./shutdown.sh
+          PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./infra.sh test
         working-directory: infrastructure
 
-      # 8) Confirm containers are removed
+      - name: Shutdown vantage6
+        if: always()
+        run: |
+          PYTHON_INTERPRETER=python${{ matrix['python-version'] }} ./infra.sh down
+        working-directory: infrastructure
+
       - name: Confirm containers are removed
+        if: always()
         run: docker ps -a
