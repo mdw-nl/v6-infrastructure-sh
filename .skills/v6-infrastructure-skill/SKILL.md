@@ -156,6 +156,7 @@ For portable scripts, avoid hardcoded host-specific paths; prefer env vars and p
 - Keep the Python package version (`VERSION_VANTAGE6`, e.g. `4.14.0`) separate from the Docker image source tags you mirror (e.g. `4.14.0-rc8`).
 - Treat amd64 CI as the authoritative signoff environment for infra-backed validation.
 - On ARM developer machines, assume the replacement GHCR infra images may require `--platform linux/amd64` when mirroring them locally.
+- If `infra.sh up` reports an architecture probe failure or `exec format error`, stop debugging the algorithm itself: the published infra images are not runnable on that host without working amd64 emulation or an amd64 runner.
 - For standalone-runtime migrations, prefer deterministic install order:
   1. stable primitives first
   2. git/tar algorithm dependencies with `--no-deps`
