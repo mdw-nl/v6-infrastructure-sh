@@ -60,7 +60,7 @@ Legacy entrypoints remain and map to the same flow:
 
 The authoritative smoke environment is `ubuntu-latest` or another amd64 host. ARM developer machines are supported on a best-effort basis only.
 
-If the published GHCR `server-lite` / `node-lite` / `ui` images are only available locally as amd64 images and Docker cannot execute them through emulation, `infra.sh up` now fails fast with a clear architecture probe error instead of starting a partial stack and failing later during entity import.
+If the published GHCR `server-lite` / `node-lite` / `ui` images are only available locally as amd64 images, `infra.sh up` now first installs `qemu-x86_64` binfmt when needed, then retries them with `DOCKER_DEFAULT_PLATFORM=linux/amd64`. Set `V6_AUTO_INSTALL_BINFMT=false` if you want to manage emulation yourself. If Docker still cannot execute the image through emulation, the harness fails fast with a clear architecture probe error instead of starting a partial stack and failing later during entity import.
 
 ## Node spec examples
 

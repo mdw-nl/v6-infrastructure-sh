@@ -180,12 +180,37 @@ install_dependencies() {
   log "Using vantage6 version $VERSION_VANTAGE6"
 }
 
+ensure_amd64_emulation() {
+  local host_arch="${1:-$(uname -m)}"
+
+  case "$host_arch" in
+    x86_64|amd64)
+      return
+      ;;
+  esac
+
+  if [ "${V6_AUTO_INSTALL_BINFMT:-true}" != "true" ]; then
+    return
+  fi
+
+  if [ -r /proc/sys/fs/binfmt_misc/qemu-x86_64 ]; then
+    return
+  fi
+
+  warn "Installing qemu-x86_64 binfmt so amd64 Vantage6 images can run on host architecture '$host_arch'"
+  docker run --privileged --rm tonistiigi/binfmt --install amd64 >/dev/null
+}
+
 probe_image_runnable_on_host() {
   local image_ref="$1"
   local image_label="$2"
+  local host_arch
   local probe_output
+  local override_probe_output
 
-  case "$(uname -m)" in
+  host_arch="$(uname -m)"
+
+  case "$host_arch" in
     x86_64|amd64)
       return
       ;;
@@ -193,7 +218,20 @@ probe_image_runnable_on_host() {
 
   probe_output="$(docker run --rm --entrypoint /bin/sh "$image_ref" -c 'true' 2>&1)" && return
 
-  fail "Local ${image_label} image '$image_ref' is not runnable on host architecture '$(uname -m)'. Docker probe failed with: $probe_output"
+  if [ -n "${DOCKER_DEFAULT_PLATFORM:-}" ]; then
+    fail "Local ${image_label} image '$image_ref' is not runnable on host architecture '$host_arch' with DOCKER_DEFAULT_PLATFORM=$DOCKER_DEFAULT_PLATFORM. Docker probe failed with: $probe_output"
+  fi
+
+  ensure_amd64_emulation "$host_arch"
+
+  override_probe_output="$(DOCKER_DEFAULT_PLATFORM=linux/amd64 docker run --rm --entrypoint /bin/sh "$image_ref" -c 'true' 2>&1)" && {
+    DOCKER_DEFAULT_PLATFORM="linux/amd64"
+    export DOCKER_DEFAULT_PLATFORM
+    warn "Local ${image_label} image '$image_ref' is amd64-only on host architecture '$host_arch'; enabling DOCKER_DEFAULT_PLATFORM=$DOCKER_DEFAULT_PLATFORM for this run"
+    return
+  }
+
+  fail "Local ${image_label} image '$image_ref' is not runnable on host architecture '$host_arch'. Docker probe failed with: $probe_output. Retrying with DOCKER_DEFAULT_PLATFORM=linux/amd64 also failed with: $override_probe_output"
 }
 
 pull_docker_images() {
