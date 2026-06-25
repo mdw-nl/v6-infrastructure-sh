@@ -429,6 +429,14 @@ build_node_config() {
   local node_image
   node_image="$(node_image_ref)"
 
+  # Extract port from SERVER_URL and build a node-facing URL
+  local server_port node_server_url
+  server_port="$(printf '%s' "$SERVER_URL" | grep -oE '[0-9]+$')"
+  server_port="${server_port:-5070}"
+  node_server_url="${SERVER_URL%:[0-9]*}"
+  node_server_url="${node_server_url/localhost/host.docker.internal}"
+  node_server_url="${node_server_url/127.0.0.1/host.docker.internal}"
+
   cat > "$output_file" <<EOL
 api_key: $api_key
 api_path: $API_PATH
@@ -442,6 +450,7 @@ encryption:
   private_key: ''
 policies:
   allowed_algorithms: []
+  require_algorithm_pull: false
 images:
   node: $node_image
 logging:
@@ -462,8 +471,8 @@ logging:
       name: docker.auth
   max_size: 1024
   use_console: true
-port: '5070'
-server_url: $SERVER_URL
+port: '$server_port'
+server_url: $node_server_url
 task_dir: ./$node_name/tasks
 share_config: false
 share_algorithm_logs: false
