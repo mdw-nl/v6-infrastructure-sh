@@ -505,6 +505,15 @@ import_entities() {
     fail "Could not find running server container for '$SERVER_NAME'"
   fi
 
+  # Wait for the server API to finish initializing
+  local health_url="${SERVER_URL}${API_PATH}/health"
+  log "Waiting for server API to be ready at '$health_url'"
+  if curl -sf --retry 30 --retry-delay 2 --retry-connrefused "$health_url" >/dev/null 2>&1; then
+    log "Server API is ready"
+  else
+    warn "Server API did not become ready after 60s; proceeding with import anyway"
+  fi
+
   log "Importing entities from '$ENTITIES_FILE'"
   docker cp "$ENTITIES_FILE" "$server_container_id":/entities.yaml
 
