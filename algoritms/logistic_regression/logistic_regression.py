@@ -7,16 +7,14 @@ from vantage6.algorithm.tools.util import info
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
-# ── User-configurable ─────────────────────────────────────────────────────────
-FEATURE_COLS = ["age", "survival_1y"]
-TARGET_COL = "deadstatus.event"      # 0 = alive/censored, 1 = died
+FEATURE_COLS = ["age", "Clinical.N.Stage", "survival_1y"]
+TARGET_COL = "deadstatus.event"      
 N_ROUNDS = 20
 LOCAL_EPOCHS = 5
 LEARNING_RATE = 0.1
 TRAIN_TEST_RATIO = 0.8   # fraction of each node's data used for training
 BATCH_RATIO = 0.3        # fraction of the training set sampled per local update
 RANDOM_SEED = 42
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class LogisticRegressionModel(nn.Module):
@@ -149,7 +147,6 @@ def central(client: AlgorithmClient) -> dict:
     info(f"Phase 2 completed in {time.time() - t0:.1f}s")
 
     # ── Phase 3: per-node evaluation ─────────────────────────────────────────
-    # One task per org so each result is unambiguously matched to a hospital
     info("")
     info("── PHASE 3: Per-node evaluation ────────────────────────────")
     t0 = time.time()
