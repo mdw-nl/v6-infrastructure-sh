@@ -9,6 +9,8 @@ API_PATH = "/api"
 USERNAME = "alpha-user"
 PASSWORD = "alpha-password"
 ALGORITHM_IMAGE = "average:latest"
+COLLABORATION_NAME = "v6-demo"
+INITIATING_ORG = "alpha"
 
 
 def main() -> None:
@@ -22,31 +24,31 @@ def main() -> None:
 
     client.setup_encryption(None)
 
-    # Resolve collaboration
     collaborations = client.collaboration.list()
-    if not collaborations["data"]:
-        print("No collaborations found.", file=sys.stderr)
-        sys.exit(1)
-    collaboration_id = collaborations["data"][0]["id"]
-
-    # Alpha submits the central task — only one organization needed here
-    # because the central function itself fans out to all nodes.
-    organizations = client.organization.list()
-    alpha_org = next(
-        (o for o in organizations["data"] if o["name"] == "alpha"), None
+    collaboration = next(
+        (c for c in collaborations["data"] if c["name"] == COLLABORATION_NAME), None
     )
-    if alpha_org is None:
-        print("Organization 'alpha' not found.", file=sys.stderr)
+    if collaboration is None:
+        print(f"Collaboration '{COLLABORATION_NAME}' not found.", file=sys.stderr)
+        sys.exit(1)
+    collaboration_id = collaboration["id"]
+
+    organizations = client.organization.list()
+    initiating_org = next(
+        (o for o in organizations["data"] if o["name"] == INITIATING_ORG), None
+    )
+    if initiating_org is None:
+        print(f"Organization '{INITIATING_ORG}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Collaboration : {collaborations['data'][0]['name']} (id={collaboration_id})")
-    print(f"Initiating org: alpha (id={alpha_org['id']})")
+    print(f"Collaboration : {collaboration['name']} (id={collaboration_id})")
+    print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print()
 
     task = client.task.create(
         collaboration=collaboration_id,
-        organizations=[alpha_org["id"]],
+        organizations=[initiating_org["id"]],
         name="Federated Average",
         description="Compute average across all nodes in the collaboration",
         image=ALGORITHM_IMAGE,
