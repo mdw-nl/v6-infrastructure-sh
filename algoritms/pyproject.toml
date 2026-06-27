@@ -10,6 +10,7 @@ dependencies = [
     "pandas",
     "numpy",
     "torch",
+    "matplotlib",
 ]
 
 [[tool.uv.index]]
