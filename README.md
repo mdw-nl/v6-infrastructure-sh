@@ -132,6 +132,7 @@ Available algorithms:
 |---|---|
 | `average/` | Federated average of a single column |
 | `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
+| `kaplan_meier/` | Federated Kaplan-Meier survival curve with 95% CI and a matplotlib plot |
 
 Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). Edit those before building the image.
 
@@ -162,6 +163,9 @@ docker build -t average:latest algoritms/average/
 
 # Logistic regression
 docker build -t logistic_regression:latest algoritms/logistic_regression/
+
+# Kaplan-Meier
+docker build -t kaplan_meier:latest algoritms/kaplan_meier/
 ```
 
 Because the nodes run inside Docker on the same host daemon, no registry push is needed for local testing. If nodes report `non-existing Docker image` anyway, see the **Local image registry** section.
@@ -174,6 +178,7 @@ With the infrastructure up (`infra.sh up`) and the image built:
 # from the algoritms/ directory
 uv run python average/run_study.py
 uv run python logistic_regression/run_study.py
+uv run python kaplan_meier/run_study.py
 ```
 
 The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
