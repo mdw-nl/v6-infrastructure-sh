@@ -118,6 +118,75 @@ docker push localhost:5000/v6-sklearn-linear-py:dev
 
 Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
 
+## Algorithms
+
+The `algoritms/` directory contains federated learning algorithms that run on top of the vantage6 infrastructure. Each algorithm has its own folder with:
+
+- An algorithm module (the code that runs on each node and the central orchestrator)
+- A `Dockerfile` to build the node image
+- A `run_study.py` script to submit the task from your machine
+
+Available algorithms:
+
+| Folder | Description |
+|---|---|
+| `average/` | Federated average of a single column |
+| `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
+
+Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). Edit those before building the image.
+
+### Python environment (uv)
+
+A shared `pyproject.toml` in `algoritms/` covers all dependencies for running study scripts and linting algorithm code locally. Install [uv](https://docs.astral.sh/uv/) if you don't have it:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then create the environment:
+
+```bash
+cd algoritms
+uv sync
+```
+
+This creates a `.venv` inside `algoritms/`. Activate it or prefix commands with `uv run`.
+
+### Building an algorithm image
+
+Each algorithm must be built as a Docker image before the nodes can execute it. Build from the repo root so the tag matches what `run_study.py` expects:
+
+```bash
+# Average
+docker build -t average:latest algoritms/average/
+
+# Logistic regression
+docker build -t logistic_regression:latest algoritms/logistic_regression/
+```
+
+Because the nodes run inside Docker on the same host daemon, no registry push is needed for local testing. If nodes report `non-existing Docker image` anyway, see the **Local image registry** section.
+
+### Running a study
+
+With the infrastructure up (`infra.sh up`) and the image built:
+
+```bash
+# from the algoritms/ directory
+uv run python average/run_study.py
+uv run python logistic_regression/run_study.py
+```
+
+The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
+
+### Adding your own algorithm
+
+1. Create a new folder under `algoritms/` with an algorithm module and a `Dockerfile`.
+2. Add any new dependencies to `algoritms/pyproject.toml` and run `uv sync`.
+3. Build the image: `docker build -t my-algo:latest algoritms/my-algo/`
+4. Write a `run_study.py` that points at `my-algo:latest` and calls `"method": "central"`.
+
+If the nodes report `non-existing Docker image`, see the **Local image registry** section below.
+
 ## Notes
 
 - Docker daemon must be available before running setup/test.

@@ -1,0 +1,106 @@
+PatientID,age,clinical.T.Stage,Clinical.N.Stage,Clinical.M.Stage,Overall.Stage,Histology,gender,Survival.time,deadstatus.event,survival_1y
+LUNG1-274,67.3421,2.0,0,0,I,squamous cell carcinoma,male,412,1,1
+LUNG1-275,74.8812,4.0,2,0,IIIb,large cell,male,188,1,0
+LUNG1-276,58.1230,1.0,0,0,I,,female,1543,0,1
+LUNG1-277,81.4467,3.0,3,0,IIIb,adenocarcinoma,male,307,1,0
+LUNG1-278,63.9954,2.0,2,0,IIIa,nos,female,892,1,1
+LUNG1-279,70.2211,4.0,0,0,IIIb,squamous cell carcinoma,male,561,1,1
+LUNG1-280,55.7738,2.0,3,0,IIIb,large cell,female,243,1,0
+LUNG1-281,76.5509,1.0,0,0,I,adenocarcinoma,male,1784,0,1
+LUNG1-282,64.3827,3.0,2,0,IIIa,squamous cell carcinoma,male,134,1,0
+LUNG1-283,52.6614,4.0,3,0,IIIb,nos,female,419,1,1
+LUNG1-284,79.0031,2.0,0,0,I,,male,673,1,1
+LUNG1-285,68.4492,1.0,2,0,IIIa,large cell,male,1102,1,1
+LUNG1-286,83.2175,4.0,0,0,IIIb,squamous cell carcinoma,male,378,1,1
+LUNG1-287,60.7883,2.0,2,0,IIIa,adenocarcinoma,female,2217,0,1
+LUNG1-288,47.5341,3.0,3,0,IIIb,large cell,male,156,1,0
+LUNG1-289,72.9967,1.0,0,0,I,nos,male,921,1,1
+LUNG1-290,65.1128,4.0,2,0,IIIb,squamous cell carcinoma,female,284,1,0
+LUNG1-291,57.4403,2.0,1,0,II,large cell,male,1398,1,1
+LUNG1-292,80.6259,2.0,0,0,I,,male,88,1,0
+LUNG1-293,73.3316,3.0,0,0,II,squamous cell carcinoma,male,534,1,1
+LUNG1-294,61.8874,4.0,3,0,IIIb,nos,female,199,1,0
+LUNG1-295,69.5540,2.0,2,0,IIIa,adenocarcinoma,male,3401,0,1
+LUNG1-296,54.2293,1.0,0,0,I,large cell,female,1127,1,1
+LUNG1-297,77.1185,4.0,2,0,IIIb,large cell,male,467,1,1
+LUNG1-298,66.8830,2.0,3,0,IIIb,squamous cell carcinoma,male,271,1,0
+LUNG1-299,82.4411,1.0,0,0,I,,male,1852,1,1
+LUNG1-300,59.3072,3.0,2,0,IIIa,nos,female,3119,0,1
+LUNG1-301,71.6648,4.0,0,0,IIIb,large cell,male,342,1,0
+LUNG1-302,48.9917,2.0,3,0,IIIb,adenocarcinoma,female,4087,0,1
+LUNG1-303,75.5523,2.0,0,0,I,squamous cell carcinoma,male,503,1,1
+LUNG1-304,63.0441,1.0,2,0,IIIa,large cell,female,1641,0,1
+LUNG1-305,86.2197,4.0,2,0,IIIb,nos,male,215,1,0
+LUNG1-306,67.7734,2.0,0,0,I,,male,739,1,1
+LUNG1-307,58.8863,3.0,3,0,IIIb,squamous cell carcinoma,male,168,1,0
+LUNG1-308,74.1209,1.0,0,0,I,adenocarcinoma,female,2863,0,1
+LUNG1-309,60.5577,4.0,2,0,IIIb,large cell,male,394,1,1
+LUNG1-310,79.8341,2.0,2,0,IIIa,squamous cell carcinoma,male,102,1,0
+LUNG1-311,53.6728,4.0,0,0,IIIb,nos,female,1593,1,1
+LUNG1-312,68.2095,1.0,0,0,I,,male,447,1,1
+LUNG1-313,76.9462,3.0,1,0,IIIa,large cell,male,781,1,1
+LUNG1-314,62.3517,4.0,3,0,IIIb,squamous cell carcinoma,female,133,1,0
+LUNG1-315,84.7753,2.0,0,0,I,nos,male,614,1,1
+LUNG1-316,56.0184,2.0,2,0,IIIa,adenocarcinoma,male,2934,0,1
+LUNG1-317,71.2236,4.0,0,0,IIIb,large cell,male,475,1,1
+LUNG1-318,64.4659,1.0,3,0,IIIb,squamous cell carcinoma,female,1011,0,1
+LUNG1-319,78.5870,2.0,2,0,IIIa,nos,male,317,1,0
+LUNG1-320,50.8813,3.0,2,0,IIIa,large cell,female,3762,0,1
+LUNG1-321,69.1504,4.0,0,0,IIIb,,male,229,1,0
+LUNG1-322,73.6249,2.0,0,0,I,squamous cell carcinoma,male,856,1,1
+LUNG1-323,61.4972,1.0,2,0,IIIa,adenocarcinoma,female,1487,1,1
+LUNG1-324,88.0614,4.0,2,0,IIIb,large cell,male,61,1,0
+LUNG1-325,57.7341,2.0,3,0,IIIb,nos,male,383,1,1
+LUNG1-326,66.3885,1.0,0,0,I,,male,1208,0,1
+LUNG1-327,80.1128,3.0,0,0,II,squamous cell carcinoma,male,497,1,1
+LUNG1-328,55.9447,4.0,3,0,IIIb,large cell,female,142,1,0
+LUNG1-329,70.6783,2.0,2,0,IIIa,nos,male,724,1,1
+LUNG1-330,63.8259,4.0,0,0,IIIb,adenocarcinoma,male,1163,1,1
+LUNG1-331,77.4130,1.0,0,0,I,,male,2031,0,1
+LUNG1-332,59.2741,2.0,1,0,II,squamous cell carcinoma,female,617,1,1
+LUNG1-333,82.8836,4.0,2,0,IIIb,large cell,male,278,1,0
+LUNG1-334,65.5316,3.0,3,0,IIIb,nos,female,335,1,0
+LUNG1-335,74.9023,2.0,0,0,I,squamous cell carcinoma,male,1074,1,1
+LUNG1-336,48.1774,4.0,3,0,IIIb,adenocarcinoma,male,3508,0,1
+LUNG1-337,71.3347,1.0,0,0,I,,female,962,1,1
+LUNG1-338,67.0562,2.0,2,0,IIIa,large cell,male,441,1,1
+LUNG1-339,85.3418,4.0,0,0,IIIb,squamous cell carcinoma,male,183,1,0
+LUNG1-340,60.1893,3.0,2,0,IIIa,nos,female,2645,0,1
+LUNG1-341,76.2277,2.0,3,0,IIIb,adenocarcinoma,male,309,1,0
+LUNG1-342,53.8140,1.0,0,0,I,large cell,male,1716,1,1
+LUNG1-343,69.7615,4.0,2,0,IIIb,squamous cell carcinoma,female,256,1,0
+LUNG1-344,78.4903,2.0,0,0,I,,male,88,1,0
+LUNG1-345,62.5408,3.0,0,0,II,nos,male,1342,1,1
+LUNG1-346,57.3872,4.0,3,0,IIIb,large cell,female,174,1,0
+LUNG1-347,81.6157,1.0,2,0,IIIa,squamous cell carcinoma,male,3287,0,1
+LUNG1-348,66.8424,2.0,2,0,IIIa,adenocarcinoma,male,519,1,1
+LUNG1-349,72.1093,4.0,0,0,IIIb,nos,male,391,1,1
+LUNG1-350,55.4817,2.0,0,0,I,,female,1438,0,1
+LUNG1-351,79.3562,3.0,2,0,IIIa,large cell,male,247,1,0
+LUNG1-352,64.0276,4.0,3,0,IIIb,squamous cell carcinoma,male,128,1,0
+LUNG1-353,68.7940,1.0,0,0,I,nos,female,2104,1,1
+LUNG1-354,75.5114,2.0,2,0,IIIa,adenocarcinoma,male,672,1,1
+LUNG1-355,58.3205,4.0,0,0,IIIb,large cell,male,503,1,1
+LUNG1-356,83.9481,2.0,0,0,I,squamous cell carcinoma,male,319,1,0
+LUNG1-357,60.6637,3.0,3,0,IIIb,,female,445,1,1
+LUNG1-358,47.2183,1.0,2,0,IIIa,nos,male,3891,0,1
+LUNG1-359,76.0340,4.0,2,0,IIIb,large cell,male,187,1,0
+LUNG1-360,70.8829,2.0,3,0,IIIb,squamous cell carcinoma,female,2763,0,1
+LUNG1-361,63.1556,1.0,0,0,I,adenocarcinoma,male,1057,1,1
+LUNG1-362,80.4217,4.0,0,0,IIIb,large cell,male,432,1,1
+LUNG1-363,56.7093,2.0,2,0,IIIa,nos,female,856,1,1
+LUNG1-364,73.8462,3.0,0,0,II,squamous cell carcinoma,male,574,1,1
+LUNG1-365,66.1340,4.0,3,0,IIIb,adenocarcinoma,male,211,1,0
+LUNG1-366,59.5628,1.0,0,0,I,,male,1319,0,1
+LUNG1-367,77.7841,2.0,2,0,IIIa,large cell,female,388,1,1
+LUNG1-368,52.3917,4.0,2,0,IIIb,squamous cell carcinoma,male,265,1,0
+LUNG1-369,87.4209,1.0,0,0,I,nos,male,741,1,1
+LUNG1-370,65.9073,3.0,1,0,IIIa,adenocarcinoma,female,1623,1,1
+LUNG1-371,74.2856,4.0,3,0,IIIb,large cell,male,97,1,0
+LUNG1-372,61.7448,2.0,0,0,I,squamous cell carcinoma,male,483,1,1
+LUNG1-373,69.3791,1.0,2,0,IIIa,,female,2198,0,1
+LUNG1-374,78.1023,4.0,2,0,IIIb,nos,male,346,1,0
+LUNG1-375,54.6182,2.0,3,0,IIIb,large cell,female,172,1,0
+LUNG1-376,82.7655,3.0,0,0,II,squamous cell carcinoma,male,629,1,1
+LUNG1-377,67.4417,4.0,0,0,IIIb,adenocarcinoma,male,1881,1,1
+LUNG1-378,71.9284,2.0,2,0,IIIa,large cell,male,511,1,1

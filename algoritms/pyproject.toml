@@ -1,0 +1,21 @@
+[project]
+name = "mdw-algorithms"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    # vantage6 client — needed to run run_study.py scripts
+    "vantage6",
+    # algorithm tools — needed to lint/test algorithm code locally
+    "vantage6-algorithm-tools==4.14.0",
+    "pandas",
+    "numpy",
+    "torch",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
