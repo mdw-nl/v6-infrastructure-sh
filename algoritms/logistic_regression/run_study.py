@@ -11,6 +11,8 @@ PASSWORD = "alpha-password"
 ALGORITHM_IMAGE = "logistic_regression:latest"
 COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
+FEATURE_COLS = ["age", "Clinical.N.Stage", "survival_1y"]
+TARGET_COL = "deadstatus.event"
 
 
 def main() -> None:
@@ -44,6 +46,8 @@ def main() -> None:
     print(f"Collaboration : {collaboration['name']} (id={collaboration_id})")
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
+    print(f"Features      : {FEATURE_COLS}")
+    print(f"Target        : {TARGET_COL}")
     print()
 
     task = client.task.create(
@@ -52,7 +56,10 @@ def main() -> None:
         name="Federated Logistic Regression",
         description="Train and evaluate a logistic regression model across all nodes",
         image=ALGORITHM_IMAGE,
-        input_={"method": "central"},
+        input_={
+            "method": "central",
+            "kwargs": {"feature_cols": FEATURE_COLS, "target_col": TARGET_COL},
+        },
         databases=[{"label": "default"}],
     )
     task_id = task["id"]

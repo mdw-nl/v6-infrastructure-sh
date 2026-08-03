@@ -38,19 +38,23 @@ def _sd_from_list(serial: dict, n_features: int) -> dict:
 
 
 @algorithm_client
-def central(client: AlgorithmClient) -> dict:
+def central(
+    client: AlgorithmClient,
+    feature_cols: list = FEATURE_COLS,
+    target_col: str = TARGET_COL,
+) -> dict:
     t_total = time.time()
     orgs = client.organization.list()
     org_ids = [org["id"] for org in orgs]
     org_names = {org["id"]: org["name"] for org in orgs}
-    n_features = len(FEATURE_COLS)
+    n_features = len(feature_cols)
 
     info("=" * 60)
     info("FEDERATED LOGISTIC REGRESSION")
     info("=" * 60)
     info(f"Organizations : {[org_names[oid] for oid in org_ids]}")
-    info(f"Features      : {FEATURE_COLS}")
-    info(f"Target        : {TARGET_COL}")
+    info(f"Features      : {feature_cols}")
+    info(f"Target        : {target_col}")
     info(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
     info(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
     info(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
@@ -63,8 +67,8 @@ def central(client: AlgorithmClient) -> dict:
         input_={
             "method": "compute_stats",
             "kwargs": {
-                "feature_cols": FEATURE_COLS,
-                "target_col": TARGET_COL,
+                "feature_cols": feature_cols,
+                "target_col": target_col,
                 "train_ratio": TRAIN_TEST_RATIO,
                 "seed": RANDOM_SEED,
             },
@@ -87,7 +91,7 @@ def central(client: AlgorithmClient) -> dict:
     global_var = global_sum_sq / total_n - global_mean ** 2
     global_std = np.sqrt(np.maximum(global_var, 1e-8))
     info("Global normalization parameters:")
-    for feat, mu, sigma in zip(FEATURE_COLS, global_mean, global_std):
+    for feat, mu, sigma in zip(feature_cols, global_mean, global_std):
         info(f"  {feat}: mean={mu:.4f}, std={sigma:.4f}")
     info(f"Phase 1 completed in {time.time() - t0:.1f}s")
 
@@ -105,8 +109,8 @@ def central(client: AlgorithmClient) -> dict:
             input_={
                 "method": "partial",
                 "kwargs": {
-                    "feature_cols": FEATURE_COLS,
-                    "target_col": TARGET_COL,
+                    "feature_cols": feature_cols,
+                    "target_col": target_col,
                     "state_dict": global_state,
                     "learning_rate": LEARNING_RATE,
                     "local_epochs": LOCAL_EPOCHS,
@@ -161,8 +165,8 @@ def central(client: AlgorithmClient) -> dict:
             input_={
                 "method": "evaluate",
                 "kwargs": {
-                    "feature_cols": FEATURE_COLS,
-                    "target_col": TARGET_COL,
+                    "feature_cols": feature_cols,
+                    "target_col": target_col,
                     "state_dict": global_state,
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
@@ -197,7 +201,7 @@ def central(client: AlgorithmClient) -> dict:
 
     return {
         "state_dict": global_state,
-        "feature_cols": FEATURE_COLS,
+        "feature_cols": feature_cols,
         "global_mean": global_mean.tolist(),
         "global_std": global_std.tolist(),
         "n_train": total_n,

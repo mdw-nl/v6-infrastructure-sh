@@ -134,7 +134,7 @@ Available algorithms:
 | `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
 | `kaplan_meier/` | Federated Kaplan-Meier survival curve with 95% CI and a matplotlib plot |
 
-Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). Edit those before building the image.
+Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see **Changing variables without rebuilding the image** below for how to override the important ones (the data columns) per run from `run_study.py`.
 
 ### Python environment (uv)
 
@@ -182,6 +182,10 @@ uv run python kaplan_meier/run_study.py
 ```
 
 The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
+
+### Changing variables without rebuilding the image
+
+To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, or `FEATURE_COLS`/`TARGET_COL` in `logistic_regression/run_study.py`), just edit the constants at the top of that algorithm's `run_study.py` and re-run it — no image rebuild needed. The constants in the algorithm file itself (`average.py`, etc.) are only the fallback defaults.
 
 ### Adding your own algorithm
 

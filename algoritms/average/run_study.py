@@ -11,6 +11,7 @@ PASSWORD = "alpha-password"
 ALGORITHM_IMAGE = "average:latest"
 COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
+VARIABLE = "age"
 
 
 def main() -> None:
@@ -44,6 +45,7 @@ def main() -> None:
     print(f"Collaboration : {collaboration['name']} (id={collaboration_id})")
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
+    print(f"Variable      : {VARIABLE}")
     print()
 
     task = client.task.create(
@@ -52,7 +54,7 @@ def main() -> None:
         name="Federated Average",
         description="Compute average across all nodes in the collaboration",
         image=ALGORITHM_IMAGE,
-        input_={"method": "central"},
+        input_={"method": "central", "kwargs": {"column": VARIABLE}},
         databases=[{"label": "default"}],
     )
     task_id = task["id"]
