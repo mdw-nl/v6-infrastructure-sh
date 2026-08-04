@@ -91,7 +91,7 @@ init_config_defaults() {
   ENTITIES_FILE="${ENTITIES_FILE:-$GENERATED_DIR/entities.generated.yaml}"
   ENTITIES_FILE="$(abspath_if_local_path "$ENTITIES_FILE")"
 
-  DATA_DIR_DEFAULT="${DATA_DIR_DEFAULT:-../old/data}"
+  DATA_DIR_DEFAULT="${DATA_DIR_DEFAULT:-../data/lung1}"
   DATA_DIR_DEFAULT="$(abspath_if_local_path "$DATA_DIR_DEFAULT")"
 
   STRICT_DATA_CHECKS="${STRICT_DATA_CHECKS:-true}"

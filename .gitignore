@@ -24,3 +24,5 @@ infrastructure/*.log
 report.md
 .vscode/
 .idea/
+
+data/beach

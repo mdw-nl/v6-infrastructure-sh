@@ -10,6 +10,9 @@ case "$command_name" in
   up)
     ./setup.sh "$@"
     ;;
+  up_beach)
+    NODES_CONFIG="./nodes.beach.env" ./setup.sh "$@"
+    ;;
   down)
     ./shutdown.sh "$@"
     ;;
@@ -33,7 +36,8 @@ Usage: ./infra.sh <command> [args]
 
 Commands:
   preflight           Validate local prerequisites and node specs
-  up [--recreate-env] Start server, nodes and UI from config
+  up [--recreate-env] Start server, nodes and UI from config (nodes.env)
+  up_beach            Same as 'up', but using nodes.beach.env (BEACH-schema data)
   down                Stop and clean up server/nodes/UI
   test                Run infrastructure smoke tests
 USAGE

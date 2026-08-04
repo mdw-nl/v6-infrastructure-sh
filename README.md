@@ -138,20 +138,19 @@ Each algorithm file has a block of **user-configurable variables** near the top 
 
 ### Python environment (uv)
 
-A shared `pyproject.toml` in `algoritms/` covers all dependencies for running study scripts and linting algorithm code locally. Install [uv](https://docs.astral.sh/uv/) if you don't have it:
+A single `pyproject.toml` at the **repo root** covers all dependencies for both `algoritms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then create the environment:
+Then create the environment from the repo root:
 
 ```bash
-cd algoritms
 uv sync
 ```
 
-This creates a `.venv` inside `algoritms/`. Activate it or prefix commands with `uv run`.
+This creates one `.venv` at the repo root, shared by both `algoritms/` and `data/`. Activate it or prefix commands with `uv run` from the root (e.g. `uv run python algoritms/average/run_study.py`).
 
 ### Building an algorithm image
 
@@ -175,10 +174,10 @@ Because the nodes run inside Docker on the same host daemon, no registry push is
 With the infrastructure up (`infra.sh up`) and the image built:
 
 ```bash
-# from the algoritms/ directory
-uv run python average/run_study.py
-uv run python logistic_regression/run_study.py
-uv run python kaplan_meier/run_study.py
+# from the repo root
+uv run python algoritms/average/run_study.py
+uv run python algoritms/logistic_regression/run_study.py
+uv run python algoritms/kaplan_meier/run_study.py
 ```
 
 The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
@@ -190,11 +189,44 @@ To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, 
 ### Adding your own algorithm
 
 1. Create a new folder under `algoritms/` with an algorithm module and a `Dockerfile`.
-2. Add any new dependencies to `algoritms/pyproject.toml` and run `uv sync`.
+2. Add any new dependencies to the root `pyproject.toml` and run `uv sync`.
 3. Build the image: `docker build -t my-algo:latest algoritms/my-algo/`
 4. Write a `run_study.py` that points at `my-algo:latest` and calls `"method": "central"`.
 
 If the nodes report `non-existing Docker image`, see the **Local image registry** section below.
+
+## 20kChallenge logistic regression (BEACH-schema)
+
+`algoritms/20k_logreg_challenge/` runs the federated ADMM logistic regression from `mdw-nl/20kChallengeVantage6`, vendored directly into this repo. It needs BEACH-schema node data (`patient_t_stage`, `patient_n_stage`, `patient_m_stage`, `patient_overall_stage`, `year_of_diagnosis`, `vital_status`, `interval_diagnosis_to_last_visit_in_days`) — not the default LUNG1 data.
+
+1. **Generate the node data** (from repo root, needs the root `.venv`, see above):
+
+   ```bash
+   uv run python data/generate_beach_data.py
+   ```
+
+   Writes per-node CSVs to `data/beach/splits_4nodes/{alpha,beta,gamma,theta}.csv`. Use `--num-subjects`, `--node-counts`, `--seed`, etc. to customize (see `parse_args()` in the script).
+
+2. **Start the network with that data** — use the BEACH node spec (`infrastructure/nodes.beach.env`), not the default:
+
+   ```bash
+   cd infrastructure
+   ENVIRONMENT=DEV ./infra.sh up_beach
+   ```
+
+3. **Build the algorithm image** (from repo root):
+
+   ```bash
+   docker build -t 20klogregchallenge:latest algoritms/20k_logreg_challenge/
+   ```
+
+4. **Run it on the network** (from repo root):
+
+   ```bash
+   uv run python algoritms/20k_logreg_challenge/run_study.py
+   ```
+
+   Submits the ADMM task, waits for all nodes, and prints coefficients, AUC, and calibration.
 
 ## Notes
 

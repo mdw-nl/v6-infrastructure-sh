@@ -1,7 +1,7 @@
 [project]
-name = "mdw-algorithms"
+name = "v6-infrastructure-sh"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     # vantage6 client — needed to run run_study.py scripts
     "vantage6",
@@ -11,6 +11,10 @@ dependencies = [
     "numpy",
     "torch",
     "matplotlib",
+    "scikit-learn",
+    # data/ synthetic data generation tooling
+    "datavalgen @ git+https://github.com/mdw-nl/datavalgen.git@v0.4.4",
+    "datavalgen-model-beach @ git+https://github.com/MaastrichtU-CDS/datavalgen-model-beach.git",
 ]
 
 [[tool.uv.index]]
