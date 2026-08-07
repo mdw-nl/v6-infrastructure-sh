@@ -136,6 +136,8 @@ Available algorithms:
 
 Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see **Changing variables without rebuilding the image** below for how to override the important ones (the data columns) per run from `run_study.py`.
 
+Note there are two logistic regression implementations in this repo: `logistic_regression/` trains a PyTorch model with federated averaging of weights across rounds, while `20k_logreg_challenge/` (see below) uses ADMM consensus optimization, which converges to the same coefficients as a centralized/pooled fit.
+
 ### Python environment (uv)
 
 A single `pyproject.toml` at the **repo root** covers all dependencies for both `algoritms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:

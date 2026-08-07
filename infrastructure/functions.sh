@@ -583,10 +583,12 @@ open_browser() {
   case "$(uname -s)" in
     Darwin) open "$url" ;;
     Linux)
-      if grep -i microsoft /proc/sys/kernel/osrelease >/dev/null 2>&1; then
+      if grep -i microsoft /proc/sys/kernel/osrelease >/dev/null 2>&1 && command -v wslview >/dev/null 2>&1; then
         wslview "$url"
-      else
+      elif command -v xdg-open >/dev/null 2>&1; then
         xdg-open "$url"
+      else
+        warn "Automatic browser launch not supported here. Open '$url' manually."
       fi
       ;;
     *) warn "Automatic browser launch not supported on this OS. Open '$url' manually." ;;
