@@ -59,6 +59,13 @@ prometheus:
 
 For production-like configs, also keep `policies.allowed_algorithms` and `databases[*].mount_mode` explicit. This makes review easier and avoids hidden runtime drift between shell env and node behavior.
 
+Important `run_context_file` constraint:
+
+- `run_context_file: true` only works with local file-backed node databases.
+- For standalone algorithms, generated node specs should use `db_type=csv` and a local CSV path, e.g. `site-c|<api_key>|/tmp/data_bucket3.csv|csv|default`.
+- Do not use `sql`, `postgresql://...`, remote URIs, or other non-file sources with `run_context_file: true`; the node will fail before the algorithm starts with a file-based database error.
+- If a colleague sees `run_context_file currently supports only file-based databases`, inspect the generated node YAML first, especially `databases[0].type`, `databases[0].uri`, and whether the wrapper passed `NODES_CONFIG` to every `infra.sh` command.
+
 ## Local workflow
 
 Recommended execution order:
@@ -67,7 +74,7 @@ Recommended execution order:
 2. Local container smoke: verify `RUN_CONTEXT_FILE` execution without infra.
 3. Infra lane: only then run `v6-infrastructure-sh`.
 
-If step 1 fails, do not continue into infra. Recent STRATA-FIT failures were usually caused by package-root imports pulling runtime-only code, not by the infra harness itself.
+If step 1 fails, do not continue into infra. Recent algorithm validation failures were often caused by package-root imports pulling runtime-only code, not by the infra harness itself.
 
 1. Clone infra harness and pin SHA.
 2. Copy algorithm test configs into infra folder.
@@ -168,6 +175,18 @@ For portable scripts, avoid hardcoded host-specific paths; prefer env vars and p
 - If a runtime smoke reports duplicate `run_context` entrypoints after an editable install, check for local `.egg-info` plus installed metadata overlap before changing code.
 - For Docker/container smoke, ensure the `RUN_CONTEXT_FILE` input URIs are valid inside the container namespace, not only on the host.
 
+## Recent infra validation notes
+
+- Use the Vantage6 major/minor version that the algorithm release actually targets. Keep the Python package version, e.g. `VERSION_VANTAGE6=4.14.0`, separate from mirrored infrastructure image tags, e.g. `server-lite` / `node-lite` image tag `4.14.0-rc8`.
+- GitHub archive downloads can be the bottleneck or failure source during Docker builds. If `pip install ... github.com/.../archive/<sha>.tar.gz` fails with rate limits or codeload errors, build wheels for local checkouts and pass them into Docker with build args instead of changing the pinned release defaults.
+- Docker cannot install arbitrary host paths unless the files are inside the build context. For local dependency overrides, copy or build wheels into a repo-local temporary directory that is ignored by git, then pass `/app/<temp-dir>/<wheel>.whl` as the Docker build arg.
+- If the algorithm image installs multiple packages that expose the same `run_context` entrypoint group, the master container can fail before doing any work. Inspect the master node's run container traceback first; a duplicate-entrypoint error is an algorithm packaging/runtime issue, not an infra startup issue.
+- Use an explicit smoke-test user and log the authenticated organization before creating tasks. If permissions fail, compare against stale server state before assuming different test users have different rights.
+- Monitor server and node logs while the smoke is running. Repeated `uWSGI listen queue full` messages can appear during fanout-heavy tests; treat them as load noise if nodes continue to start containers and task statuses keep advancing.
+- Survival-analysis smoke tests can be much slower than local checks because each phase may fan out through real Vantage6 tasks: validation, imputation metrics, event-time collection, iterations or event-table aggregation, result encryption, and master aggregation.
+- If an algorithm phase is known to be slow, record it as performance risk but do not debug it inside an infrastructure lane unless it causes a timeout or incorrect result. Set task timeouts high enough for the current known behavior.
+- Always verify that the PR or release branch actually points at the commit that was tested. During GitHub degradation, branch refs and PR synthetic refs may lag or disagree temporarily; use PR metadata or an explicit branch SHA check before tagging.
+
 ## GitHub Actions workflow pattern
 
 Use `actions/checkout` twice: once for the algorithm repo and once for infra harness at pinned SHA.
@@ -217,8 +236,12 @@ Use `actions/checkout` twice: once for the algorithm repo and once for infra har
 2. Local import gate failed before infra: fix package-root imports and mixed runtime/library boundaries first.
 3. Local container `run_context` smoke failed: fix the algorithm/container contract before infra.
 4. `up` fails: server/node startup config mismatch.
-5. `run_algo_smoke.sh` fails: algorithm/package/runtime issue. Inspect the master org node container traceback first.
-6. `infra.sh test` fails: verify `UI_ENABLED`/`NODES_CONFIG` match how infra was started.
-7. Task status `non-existing Docker image`: use local registry with configurable port and retag image.
-8. Harbor server/node image pull fails: Harbor is retired for this use; switch to GHCR `server-lite` / `node-lite` / `ui` images or a local mirror of them.
-9. `down` fails: teardown residue; rerun and inspect remaining containers.
+5. Node logs say `run_context_file currently supports only file-based databases`: generated node config is using a non-file database source while `run_context_file=true`; fix `nodes.env` to `db_type=csv` with a local CSV path, or disable `RUN_CONTEXT_FILE` only for non-run_context algorithms.
+6. `run_algo_smoke.sh` fails: algorithm/package/runtime issue. Inspect the master org node container traceback first.
+7. `infra.sh test` fails: verify `UI_ENABLED`/`NODES_CONFIG` match how infra was started.
+8. Task status `non-existing Docker image`: use local registry with configurable port and retag image.
+9. Harbor server/node image pull fails: Harbor is retired for this use; switch to GHCR `server-lite` / `node-lite` / `ui` images or a local mirror of them.
+10. Docker build fails while fetching GitHub tarballs: retry only after checking GitHub status; prefer local wheel build-arg overrides for validation during an outage.
+11. Master task fails immediately with duplicate `run_context` entrypoints: inspect installed distributions in the image and make the algorithm runtime select its own distribution's entrypoints.
+12. Server logs show `uWSGI listen queue full`: check node progress and run-container logs before treating it as fatal; survival fanout can saturate the local demo server while still completing.
+13. `down` fails: teardown residue; rerun and inspect remaining containers.
