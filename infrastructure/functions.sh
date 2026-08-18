@@ -269,6 +269,12 @@ NODE_API_KEYS=()
 NODE_DB_URIS=()
 NODE_DB_TYPES=()
 NODE_DB_LABELS=()
+# Optional second (folder) database per node — e.g. a NIfTI slice folder
+# mounted read-only alongside the primary CSV manifest. Empty string means
+# "no second database for this node".
+NODE_EXTRA_DB_URIS=()
+NODE_EXTRA_DB_TYPES=()
+NODE_EXTRA_DB_LABELS=()
 
 load_node_specs() {
   local specs_file="$NODES_CONFIG"
@@ -280,12 +286,16 @@ load_node_specs() {
   NODE_DB_URIS=()
   NODE_DB_TYPES=()
   NODE_DB_LABELS=()
+  NODE_EXTRA_DB_URIS=()
+  NODE_EXTRA_DB_TYPES=()
+  NODE_EXTRA_DB_LABELS=()
 
   local line_no=0
-  while IFS='|' read -r raw_name raw_api_key raw_db_uri raw_db_type raw_db_label raw_extra; do
+  while IFS='|' read -r raw_name raw_api_key raw_db_uri raw_db_type raw_db_label \
+                        raw_extra_db_uri raw_extra_db_type raw_extra_db_label raw_extra; do
     line_no=$((line_no + 1))
 
-    local name api_key db_uri db_type db_label
+    local name api_key db_uri db_type db_label extra_db_uri extra_db_type extra_db_label
     name="$(trim "${raw_name:-}")"
 
     if [ -z "$name" ]; then
@@ -300,6 +310,9 @@ load_node_specs() {
     db_uri="$(trim "${raw_db_uri:-}")"
     db_type="$(trim "${raw_db_type:-}")"
     db_label="$(trim "${raw_db_label:-}")"
+    extra_db_uri="$(trim "${raw_extra_db_uri:-}")"
+    extra_db_type="$(trim "${raw_extra_db_type:-}")"
+    extra_db_label="$(trim "${raw_extra_db_label:-}")"
 
     if [ -n "$(trim "${raw_extra:-}")" ]; then
       fail "Invalid node spec format at line $line_no in '$specs_file' (too many columns)"
@@ -318,11 +331,22 @@ load_node_specs() {
       db_uri="$(abspath_if_local_path "$db_uri")"
     fi
 
+    if [ -n "$extra_db_uri" ]; then
+      extra_db_type="${extra_db_type:-folder}"
+      extra_db_label="${extra_db_label:-extra}"
+      if ! looks_like_uri "$extra_db_uri"; then
+        extra_db_uri="$(abspath_if_local_path "$extra_db_uri")"
+      fi
+    fi
+
     NODE_NAMES+=("$name")
     NODE_API_KEYS+=("$api_key")
     NODE_DB_URIS+=("$db_uri")
     NODE_DB_TYPES+=("$db_type")
     NODE_DB_LABELS+=("$db_label")
+    NODE_EXTRA_DB_URIS+=("$extra_db_uri")
+    NODE_EXTRA_DB_TYPES+=("$extra_db_type")
+    NODE_EXTRA_DB_LABELS+=("$extra_db_label")
   done < "$specs_file"
 
   if [ "${#NODE_NAMES[@]}" -eq 0 ]; then
@@ -339,13 +363,20 @@ validate_node_specs() {
   fi
 
   for i in "${!NODE_NAMES[@]}"; do
-    local name db_uri db_type
+    local name db_uri db_type extra_db_uri extra_db_type
     name="${NODE_NAMES[$i]}"
     db_uri="${NODE_DB_URIS[$i]}"
     db_type="${NODE_DB_TYPES[$i]}"
+    extra_db_uri="${NODE_EXTRA_DB_URIS[$i]:-}"
+    extra_db_type="${NODE_EXTRA_DB_TYPES[$i]:-}"
 
     if $strict_data_checks_enabled && [ "$db_type" = "csv" ] && ! looks_like_uri "$db_uri"; then
       [ -f "$db_uri" ] || fail "CSV data for node '$name' not found: $db_uri"
+    fi
+
+    if [ -n "$extra_db_uri" ] && $strict_data_checks_enabled && [ "$extra_db_type" = "folder" ] \
+       && ! looks_like_uri "$extra_db_uri"; then
+      [ -d "$extra_db_uri" ] || fail "Extra folder database for node '$name' not found: $extra_db_uri"
     fi
   done
 }
@@ -355,6 +386,9 @@ print_node_specs() {
   log "Loaded ${#NODE_NAMES[@]} node specs"
   for i in "${!NODE_NAMES[@]}"; do
     log "- ${NODE_NAMES[$i]} (${NODE_DB_TYPES[$i]}:${NODE_DB_LABELS[$i]}) -> ${NODE_DB_URIS[$i]}"
+    if [ -n "${NODE_EXTRA_DB_URIS[$i]:-}" ]; then
+      log "  + (${NODE_EXTRA_DB_TYPES[$i]}:${NODE_EXTRA_DB_LABELS[$i]}) -> ${NODE_EXTRA_DB_URIS[$i]}"
+    fi
   done
 }
 
@@ -426,6 +460,11 @@ build_node_config() {
   local db_type="$4"
   local db_label="$5"
   local output_file="$6"
+  # Optional second (folder) database — e.g. a NIfTI slice folder mounted
+  # read-only alongside the primary CSV manifest. Pass empty strings to omit.
+  local extra_db_uri="${7:-}"
+  local extra_db_type="${8:-folder}"
+  local extra_db_label="${9:-extra}"
   local node_image
   node_image="$(node_image_ref)"
 
@@ -445,6 +484,18 @@ databases:
     type: $db_type
     uri: $db_uri
     mount_mode: ro
+EOL
+
+  if [ -n "$extra_db_uri" ]; then
+    cat >> "$output_file" <<EOL
+  - label: $extra_db_label
+    type: $extra_db_type
+    uri: $extra_db_uri
+    mount_mode: ro
+EOL
+  fi
+
+  cat >> "$output_file" <<EOL
 encryption:
   enabled: false
   private_key: ''
@@ -547,14 +598,19 @@ start_nodes() {
 
   for i in "${!NODE_NAMES[@]}"; do
     local node_name api_key db_uri db_type db_label node_config_file
+    local extra_db_uri extra_db_type extra_db_label
     node_name="${NODE_NAMES[$i]}"
     api_key="${NODE_API_KEYS[$i]}"
     db_uri="${NODE_DB_URIS[$i]}"
     db_type="${NODE_DB_TYPES[$i]}"
     db_label="${NODE_DB_LABELS[$i]}"
+    extra_db_uri="${NODE_EXTRA_DB_URIS[$i]:-}"
+    extra_db_type="${NODE_EXTRA_DB_TYPES[$i]:-}"
+    extra_db_label="${NODE_EXTRA_DB_LABELS[$i]:-}"
     node_config_file="$GENERATED_DIR/nodes/${node_name}.yaml"
 
-    build_node_config "$node_name" "$api_key" "$db_uri" "$db_type" "$db_label" "$node_config_file"
+    build_node_config "$node_name" "$api_key" "$db_uri" "$db_type" "$db_label" "$node_config_file" \
+      "$extra_db_uri" "$extra_db_type" "$extra_db_label"
 
     log "Starting node '$node_name'"
     v6 node start --user "${keep_flag[@]}" -c "$node_config_file" --image "$(node_image_ref)"

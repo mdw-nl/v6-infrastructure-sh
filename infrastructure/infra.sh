@@ -13,6 +13,9 @@ case "$command_name" in
   up_beach)
     NODES_CONFIG="./nodes.beach.env" ./setup.sh "$@"
     ;;
+  up_argos)
+    NODES_CONFIG="./nodes.argos.env" ./setup.sh "$@"
+    ;;
   down)
     ./shutdown.sh "$@"
     ;;

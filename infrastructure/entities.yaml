@@ -1,3 +1,5 @@
+# This file is not used in the scripts it can be used to see how a generated entities.yaml looks like (it is not exactly one to one)
+
 collaborations:
 - encrypted: false
   name: v6-demo

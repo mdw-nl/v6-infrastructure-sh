@@ -73,6 +73,8 @@ beta|<api_key>|postgresql://user:pass@db:5432/demo|sql|warehouse
 
 If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
 
+An optional second, read-only **folder** database can be added via 3 extra columns — `name|api_key|db_uri|db_type|db_label|extra_db_uri|extra_db_type|extra_db_label` — bind-mounted read-only at `/mnt/<extra_db_label>` inside algorithm containers. `argos_cnn` uses this to mount each org's NIfTI folder alongside its CSV manifest; see `infrastructure/nodes.argos.env`.
+
 Generated node YAML keeps the runtime-critical fields explicit:
 
 ```yaml
@@ -133,6 +135,7 @@ Available algorithms:
 | `average/` | Federated average of a single column |
 | `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
 | `kaplan_meier/` | Federated Kaplan-Meier survival curve with 95% CI and a matplotlib plot |
+| `argos_cnn/` | Federated ModResNet (PyTorch) for CT/GTV tumor segmentation — see **Argos CNN** below |
 
 Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see **Changing variables without rebuilding the image** below for how to override the important ones (the data columns) per run from `run_study.py`.
 
@@ -229,6 +232,44 @@ If the nodes report `non-existing Docker image`, see the **Local image registry*
    ```
 
    Submits the ADMM task, waits for all nodes, and prints coefficients, AUC, and calibration.
+
+## Argos CNN (federated CT/GTV segmentation)
+
+`algoritms/argos_cnn/` is a PyTorch port of `mod_resnet` from the original `argosfeddeep` (TensorFlow) repo: a ResNet-encoder / PSP-style multi-scale-fusion decoder that segments lung tumors (GTV) on 2.5D (3-slice) CT stacks. It needs a per-slice NIfTI manifest, not the default LUNG1 CSVs.
+
+1. **Generate the node data** (synthetic phantom CT/GTV NIfTI files + manifests — see `generate_argos_data.py`'s docstring for exactly what's realistic vs. fake about it):
+
+   ```bash
+   uv run python data/generate_argos_data.py
+   ```
+
+   Writes `data/argos/{alpha,beta,gamma,theta}.csv` and `data/argos/nifti/<org>/...`.
+
+2. **Start the network with that data** — uses `infrastructure/nodes.argos.env`, which also mounts each org's `data/argos/nifti/<org>` folder read-only at `/mnt/nifti` (see the folder-database note above):
+
+   ```bash
+   cd infrastructure
+   ENVIRONMENT=DEV ./infra.sh up_argos
+   ```
+
+3. **Build the algorithm image** (from repo root — copies both `argos_cnn.py` and `model.py`):
+
+   ```bash
+   docker build -t argos_cnn:latest algoritms/argos_cnn/
+   ```
+
+4. **Run it on the network**:
+
+   ```bash
+   uv run python algoritms/argos_cnn/run_study.py
+   ```
+
+   Submits federated training (FedAvg, weighted by each node's dataset size), waits for all rounds, and writes the trained weights to `argos_cnn_trained_weights.pt`.
+
+Notes:
+- Unlike the other algorithms, hyperparameters (`N_ROUNDS`/`LOCAL_STEPS`/`BATCH_SIZE`/`LEARNING_RATE`) live only in `argos_cnn.py` — `run_study.py` intentionally passes none, so there's a single source of truth. Edit them there and rebuild the image.
+- Trained weights ride inside the normal vantage6 task payload as a gzip+base64 string (tens of MB for this model) rather than a separate file-transfer channel — this won't scale indefinitely to much larger models; see `argos_cnn.py`'s module docstring and vantage6's blob-storage mechanism (`vantage6/common/client/blob_storage.py`) as the eventual fix.
+- `data/argos/` is synthetic phantom data for exercising the pipeline end to end (I/O, normalization, FedAvg), not real anatomy — don't draw conclusions about model quality from it.
 
 ## Notes
 
