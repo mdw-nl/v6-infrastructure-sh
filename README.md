@@ -62,14 +62,31 @@ The authoritative smoke environment is `ubuntu-latest` or another amd64 host. AR
 
 If the published GHCR `server-lite` / `node-lite` / `ui` images are only available locally as amd64 images, `infra.sh up` now first installs `qemu-x86_64` binfmt when needed, then retries them with `DOCKER_DEFAULT_PLATFORM=linux/amd64`. Set `V6_AUTO_INSTALL_BINFMT=false` if you want to manage emulation yourself. If Docker still cannot execute the image through emulation, the harness fails fast with a clear architecture probe error instead of starting a partial stack and failing later during entity import.
 
+Cleanup removes stale local Vantage6 state and Docker networks for the configured
+server and node names before startup. This prevents old tasks, databases, and
+networks from contaminating the next run. It does not clear a live uWSGI/qemu
+socket backlog inside a running server process; if the server stops responding
+under emulation, stop the stack and retry on amd64 for an authoritative result.
+
 ## Node spec examples
 
-`infrastructure/nodes.env` supports mixed backends:
+`infrastructure/nodes.env` supports mixed backends when `RUN_CONTEXT_FILE=false`:
 
 ```text
 alpha|<api_key>|../data/alpha.csv|csv|default
 beta|<api_key>|postgresql://user:pass@db:5432/demo|sql|warehouse
 ```
+
+When `RUN_CONTEXT_FILE=true` (the default for standalone STRATA-FIT algorithms),
+the harness requires each node database to be a local file-backed CSV entry:
+
+```text
+gamma|<api_key>|/absolute/path/to/data_bucket3.csv|csv|default
+```
+
+Do not use `sql`, `postgresql://...`, or other URI-backed sources with
+`RUN_CONTEXT_FILE=true`; the vantage6 node cannot materialize those as
+`RUN_CONTEXT_FILE` inputs and will fail before the algorithm starts.
 
 If `db_uri` is empty, it defaults to `${DATA_DIR_DEFAULT}/<name>.csv`.
 
@@ -123,6 +140,16 @@ Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
 - Docker daemon must be available before running setup/test.
 - `STRICT_DATA_CHECKS=true` enforces local CSV existence checks.
 - UI can be disabled with `UI_ENABLED=false`.
+- Optional uWSGI mitigation: build a patched local `server-lite` image that adds
+  `--listen 1024`, `--need-app`, maybe `--stats :9191`, and possibly
+  `--harakiri`. This can reduce queue-full noise, but it is a buffer, not the
+  real fix. Avoid adding multiple uWSGI workers until tested because this
+  harness uses sqlite-backed local server state.
+- Version/build provenance matters here. The MDW `server-lite` images inspected
+  at `4.14.0-rc7`, `4.14.0-rc8`, and `4.14.0-rc9` all package
+  `vantage6-server 4.14.0` and start it with the same single uWSGI command.
+  Retrying adjacent rc tags is unlikely to fix uWSGI queue overflow unless the
+  underlying Vantage6 server startup/runtime changes.
 - Recommended workflow is:
   1. validate the target algorithm repo in a fresh `/tmp` venv
   2. run a local container smoke for `RUN_CONTEXT_FILE`

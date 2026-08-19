@@ -95,12 +95,24 @@ init_config_defaults() {
   DATA_DIR_DEFAULT="$(abspath_if_local_path "$DATA_DIR_DEFAULT")"
 
   STRICT_DATA_CHECKS="${STRICT_DATA_CHECKS:-true}"
+  RUN_CONTEXT_FILE="${RUN_CONTEXT_FILE:-true}"
   CLEAN_LOCAL_STATE="${CLEAN_LOCAL_STATE:-true}"
   KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
   UI_ENABLED="${UI_ENABLED:-true}"
   UI_PORT="${UI_PORT:-80}"
   UI_URL="${UI_URL:-http://localhost}"
   COLLABORATION_NAME="${COLLABORATION_NAME:-v6-demo}"
+}
+
+is_run_context_file_db_type() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    csv)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 server_image_ref() {
@@ -344,6 +356,15 @@ validate_node_specs() {
     db_uri="${NODE_DB_URIS[$i]}"
     db_type="${NODE_DB_TYPES[$i]}"
 
+    if parse_bool "$RUN_CONTEXT_FILE"; then
+      if ! is_run_context_file_db_type "$db_type"; then
+        fail "run_context_file=true supports only local file-based node databases in this harness. Node '$name' label '${NODE_DB_LABELS[$i]}' has type '$db_type'. Use db_type=csv with a local CSV path, or set RUN_CONTEXT_FILE=false for non-run_context algorithms."
+      fi
+      if looks_like_uri "$db_uri"; then
+        fail "run_context_file=true requires a local file path for node '$name' label '${NODE_DB_LABELS[$i]}'. Got URI '$db_uri'. Use a local CSV path, or set RUN_CONTEXT_FILE=false for non-run_context algorithms."
+      fi
+    fi
+
     if $strict_data_checks_enabled && [ "$db_type" = "csv" ] && ! looks_like_uri "$db_uri"; then
       [ -f "$db_uri" ] || fail "CSV data for node '$name' not found: $db_uri"
     fi
@@ -467,7 +488,7 @@ server_url: $SERVER_URL
 task_dir: ./$node_name/tasks
 share_config: false
 share_algorithm_logs: false
-run_context_file: true
+run_context_file: $RUN_CONTEXT_FILE
 prometheus:
   enabled: false
 node_extra_hosts:
@@ -618,12 +639,14 @@ remove_containers() {
   if [ -n "$server_containers" ]; then
     docker rm -f $server_containers >/dev/null 2>&1 || true
   fi
+  docker network rm "vantage6-${SERVER_NAME}-user-network" >/dev/null 2>&1 || true
 
   local i
   for i in "${!NODE_NAMES[@]}"; do
     local node_container
     node_container="vantage6-${NODE_NAMES[$i]}-user"
     docker rm -f "$node_container" >/dev/null 2>&1 || true
+    docker network rm "${node_container}-net" >/dev/null 2>&1 || true
   done
 }
 
@@ -635,13 +658,20 @@ cleanup_local_state() {
 
   case "$(uname -s)" in
     Darwin)
-      rm -rf "$HOME/Library/Application Support/vantage6/node" \
-             "$HOME/Library/Application Support/vantage6/server"
+      rm -rf "$HOME/Library/Application Support/vantage6/server/$SERVER_NAME"
+      local i
+      for i in "${!NODE_NAMES[@]}"; do
+        rm -rf "$HOME/Library/Application Support/vantage6/node/${NODE_NAMES[$i]}"
+      done
       ;;
     Linux)
-      rm -rf "$HOME/.local/share/vantage6/node" \
-             "$HOME/.local/share/vantage6/server" \
-             "$HOME/.cache/vantage6"
+      rm -rf "$HOME/.local/share/vantage6/server/$SERVER_NAME" \
+             "$HOME/.cache/vantage6/server/$SERVER_NAME"
+      local i
+      for i in "${!NODE_NAMES[@]}"; do
+        rm -rf "$HOME/.local/share/vantage6/node/${NODE_NAMES[$i]}" \
+               "$HOME/.cache/vantage6/node/${NODE_NAMES[$i]}"
+      done
       ;;
     *)
       warn "Skipping OS-level cleanup for unsupported platform"
