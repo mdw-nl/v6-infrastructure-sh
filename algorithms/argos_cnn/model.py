@@ -178,8 +178,10 @@ class ModResNet(nn.Module):
         d2 = e2 + d1
         d2 = self.skip_bn(self.skip_conv(d2))
 
-        d3 = F.relu(self.up1_bn(self.up1(d2)))
-        d3 = F.relu(self.up2_bn(self.up2(d3)))
+        # No activation here on purpose: the original is ConvTranspose->BN
+        # twice with no ReLU in between or after, before the final 1x1 conv.
+        d3 = self.up1_bn(self.up1(d2))
+        d3 = self.up2_bn(self.up2(d3))
 
         logits = self.out_conv(d3)
         return F.softmax(logits, dim=1)
