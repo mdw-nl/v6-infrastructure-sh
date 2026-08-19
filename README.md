@@ -122,7 +122,7 @@ Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
 
 ## Algorithms
 
-The `algoritms/` directory contains federated learning algorithms that run on top of the vantage6 infrastructure. Each algorithm has its own folder with:
+The `algorithms/` directory contains federated learning algorithms that run on top of the vantage6 infrastructure. Each algorithm has its own folder with:
 
 - An algorithm module (the code that runs on each node and the central orchestrator)
 - A `Dockerfile` to build the node image
@@ -143,7 +143,7 @@ Note there are two logistic regression implementations in this repo: `logistic_r
 
 ### Python environment (uv)
 
-A single `pyproject.toml` at the **repo root** covers all dependencies for both `algoritms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:
+A single `pyproject.toml` at the **repo root** covers all dependencies for both `algorithms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -155,7 +155,7 @@ Then create the environment from the repo root:
 uv sync
 ```
 
-This creates one `.venv` at the repo root, shared by both `algoritms/` and `data/`. Activate it or prefix commands with `uv run` from the root (e.g. `uv run python algoritms/average/run_study.py`).
+This creates one `.venv` at the repo root, shared by both `algorithms/` and `data/`. Activate it or prefix commands with `uv run` from the root (e.g. `uv run python algorithms/average/run_study.py`).
 
 ### Building an algorithm image
 
@@ -163,13 +163,13 @@ Each algorithm must be built as a Docker image before the nodes can execute it. 
 
 ```bash
 # Average
-docker build -t average:latest algoritms/average/
+docker build -t average:latest algorithms/average/
 
 # Logistic regression
-docker build -t logistic_regression:latest algoritms/logistic_regression/
+docker build -t logistic_regression:latest algorithms/logistic_regression/
 
 # Kaplan-Meier
-docker build -t kaplan_meier:latest algoritms/kaplan_meier/
+docker build -t kaplan_meier:latest algorithms/kaplan_meier/
 ```
 
 Because the nodes run inside Docker on the same host daemon, no registry push is needed for local testing. If nodes report `non-existing Docker image` anyway, see the **Local image registry** section.
@@ -180,9 +180,9 @@ With the infrastructure up (`infra.sh up`) and the image built:
 
 ```bash
 # from the repo root
-uv run python algoritms/average/run_study.py
-uv run python algoritms/logistic_regression/run_study.py
-uv run python algoritms/kaplan_meier/run_study.py
+uv run python algorithms/average/run_study.py
+uv run python algorithms/logistic_regression/run_study.py
+uv run python algorithms/kaplan_meier/run_study.py
 ```
 
 The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
@@ -193,16 +193,16 @@ To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, 
 
 ### Adding your own algorithm
 
-1. Create a new folder under `algoritms/` with an algorithm module and a `Dockerfile`.
+1. Create a new folder under `algorithms/` with an algorithm module and a `Dockerfile`.
 2. Add any new dependencies to the root `pyproject.toml` and run `uv sync`.
-3. Build the image: `docker build -t my-algo:latest algoritms/my-algo/`
+3. Build the image: `docker build -t my-algo:latest algorithms/my-algo/`
 4. Write a `run_study.py` that points at `my-algo:latest` and calls `"method": "central"`.
 
 If the nodes report `non-existing Docker image`, see the **Local image registry** section below.
 
 ## 20kChallenge logistic regression (BEACH-schema)
 
-`algoritms/20k_logreg_challenge/` runs the federated ADMM logistic regression from `mdw-nl/20kChallengeVantage6`, vendored directly into this repo. It needs BEACH-schema node data (`patient_t_stage`, `patient_n_stage`, `patient_m_stage`, `patient_overall_stage`, `year_of_diagnosis`, `vital_status`, `interval_diagnosis_to_last_visit_in_days`) — not the default LUNG1 data.
+`algorithms/20k_logreg_challenge/` runs the federated ADMM logistic regression from `mdw-nl/20kChallengeVantage6`, vendored directly into this repo. It needs BEACH-schema node data (`patient_t_stage`, `patient_n_stage`, `patient_m_stage`, `patient_overall_stage`, `year_of_diagnosis`, `vital_status`, `interval_diagnosis_to_last_visit_in_days`) — not the default LUNG1 data.
 
 1. **Generate the node data** (from repo root, needs the root `.venv`, see above):
 
@@ -222,20 +222,20 @@ If the nodes report `non-existing Docker image`, see the **Local image registry*
 3. **Build the algorithm image** (from repo root):
 
    ```bash
-   docker build -t 20klogregchallenge:latest algoritms/20k_logreg_challenge/
+   docker build -t 20klogregchallenge:latest algorithms/20k_logreg_challenge/
    ```
 
 4. **Run it on the network** (from repo root):
 
    ```bash
-   uv run python algoritms/20k_logreg_challenge/run_study.py
+   uv run python algorithms/20k_logreg_challenge/run_study.py
    ```
 
    Submits the ADMM task, waits for all nodes, and prints coefficients, AUC, and calibration.
 
 ## Argos CNN (federated CT/GTV segmentation)
 
-`algoritms/argos_cnn/` is a PyTorch port of `mod_resnet` from the original `argosfeddeep` (TensorFlow) repo: a ResNet-encoder / PSP-style multi-scale-fusion decoder that segments lung tumors (GTV) on 2.5D (3-slice) CT stacks. It needs a per-slice NIfTI manifest, not the default LUNG1 CSVs.
+`algorithms/argos_cnn/` is a PyTorch port of `mod_resnet` from the original `argosfeddeep` (TensorFlow) repo: a ResNet-encoder / PSP-style multi-scale-fusion decoder that segments lung tumors (GTV) on 2.5D (3-slice) CT stacks. It needs a per-slice NIfTI manifest, not the default LUNG1 CSVs.
 
 1. **Generate the node data** (synthetic phantom CT/GTV NIfTI files + manifests — see `generate_argos_data.py`'s docstring for exactly what's realistic vs. fake about it):
 
@@ -255,13 +255,13 @@ If the nodes report `non-existing Docker image`, see the **Local image registry*
 3. **Build the algorithm image** (from repo root — copies both `argos_cnn.py` and `model.py`):
 
    ```bash
-   docker build -t argos_cnn:latest algoritms/argos_cnn/
+   docker build -t argos_cnn:latest algorithms/argos_cnn/
    ```
 
 4. **Run it on the network**:
 
    ```bash
-   uv run python algoritms/argos_cnn/run_study.py
+   uv run python algorithms/argos_cnn/run_study.py
    ```
 
    Submits federated training (FedAvg, weighted by each node's dataset size), waits for all rounds, and writes the trained weights to `argos_cnn_trained_weights.pt`.

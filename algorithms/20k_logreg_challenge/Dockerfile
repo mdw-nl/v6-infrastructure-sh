@@ -11,8 +11,8 @@
 # PyPI package and is already an install_requires of the algorithm's own
 # setup.py, so a plain Python base image is enough.
 #
-# Build (from this repo's root), same convention as the other algoritms/:
-#   docker build -t 20klogregchallenge:latest algoritms/20k_logreg_challenge/
+# Build (from this repo's root), same convention as the other algorithms/:
+#   docker build -t 20klogregchallenge:latest algorithms/20k_logreg_challenge/
 
 FROM python:3.12-slim
 
