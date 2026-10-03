@@ -3,6 +3,7 @@ from io import StringIO
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.optimize import minimize
 from scipy.stats import norm
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
@@ -99,3 +100,17 @@ def test_reported_p_values_match_beta_over_se() -> None:
     reported_p = model_df["p-value"].astype(float).to_numpy()
 
     assert np.allclose(reported_p, expected_p, atol=1e-4, rtol=1e-4)
+
+
+def test_missing_covariate_column_raises_clear_error() -> None:
+    df = pd.read_csv(CURRENT_PATH / "HEAD-NECK-RADIOMICS-HN1.csv")
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="coxph")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"not_a_real_column"):
+        client.task.create(
+            input_={
+                "method": "compute_summed_z",
+                "kwargs": {"outcome_col": OUTCOME_COL, "expl_vars": ["not_a_real_column"]},
+            },
+            organizations=org_ids,
+        )

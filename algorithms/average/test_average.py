@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 
@@ -27,6 +28,14 @@ def test_partial_basic_sum_and_count() -> None:
     df = pd.DataFrame({"age": [10, 20, 30]})
     result = _call_partial(df, column="age")
     assert result == {"sum": 60.0, "count": 3}
+
+
+def test_partial_raises_clear_error_for_missing_column() -> None:
+    df = pd.DataFrame({"age": [10, 20, 30]})
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="average")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"missing_col"):
+        client.task.create(input_={"method": "partial", "kwargs": {"column": "missing_col"}}, organizations=org_ids)
 
 
 def test_partial_skips_nan_values() -> None:

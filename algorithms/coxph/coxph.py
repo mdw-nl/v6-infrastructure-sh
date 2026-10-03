@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy.linalg import solve
 from scipy.stats import chi2, norm
-from vantage6.algorithm.tools.util import info, warn
+from vantage6.algorithm.tools.util import info, warn, error
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
@@ -13,6 +13,17 @@ OUTCOME_COL = "deadstatus.event"
 EXPL_VARS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
+
+
+def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {missing} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        error(msg)
+        raise ValueError(msg)
 
 
 def _safe_inverse(matrix: np.ndarray) -> np.ndarray:
@@ -293,6 +304,7 @@ def get_unique_event_times(
     outcome_col: str = OUTCOME_COL,
     minimum_events: int = 10,
 ) -> dict:
+    _require_columns(df, [time_col, outcome_col], "get_unique_event_times")
     info("Computing unique event times")
     if int(df[outcome_col].notnull().sum()) <= int(minimum_events):
         org_id = getattr(client, "organization_id", -1)
@@ -314,6 +326,7 @@ def compute_summed_z(
     expl_vars: list = None,
 ) -> dict:
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
+    _require_columns(df, [outcome_col, *expl_vars], "compute_summed_z")
     info("Computing summed z statistics")
     z_sum = df[df[outcome_col] == 1][expl_vars].sum().astype(float).to_dict()
     return {"sum": z_sum}
@@ -328,6 +341,7 @@ def perform_iteration(
     unique_time_events: list = None,
 ) -> dict:
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
+    _require_columns(df, [time_col, *expl_vars], "perform_iteration")
     beta_arr = np.asarray(beta, dtype=float)
     info("Computing aggregates for the derivation of the partial likelihood")
 

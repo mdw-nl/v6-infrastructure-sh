@@ -307,25 +307,24 @@ def test_central_global_normalization_matches_pooled_computation() -> None:
     assert result["global_std"] == pytest.approx([np.sqrt(max(variance, 1e-8))], rel=1e-5)
 
 
-def test_central_learns_a_clearly_separable_pattern(monkeypatch) -> None:
+def test_central_learns_a_clearly_separable_pattern() -> None:
     # End-to-end learning check: on cleanly separable data split across
     # nodes, after the full federated training loop the model should do
     # meaningfully better than chance (0.5), not just run without error.
-    monkeypatch.setattr(logistic_regression, "N_ROUNDS", 10)
     node_a = _separable_df(80, seed=8)
     node_b = _separable_df(80, seed=9)
-    result = _run_central([node_a, node_b], feature_cols=["x"], target_col="y")
+    result = _run_central([node_a, node_b], feature_cols=["x"], target_col="y", n_rounds=10)
     assert result["accuracy"] > 0.8
 
 
-def test_central_fedavg_weights_by_node_sample_count_not_naively(monkeypatch) -> None:
+def test_central_fedavg_weights_by_node_sample_count_not_naively() -> None:
     # The property confirmed by hand-reading central()'s aggregation loop:
     # reproduce round 1's inputs independently, call partial() directly per
     # node to get real (not hand-derived) per-node updates, then confirm
     # central()'s actual aggregated result matches the n-weighted average of
     # those two real updates and NOT their naive unweighted average.
-    monkeypatch.setattr(logistic_regression, "N_ROUNDS", 1)
-    monkeypatch.setattr(logistic_regression, "BATCH_RATIO", 1.0)
+    n_rounds = 1
+    batch_ratio = 1.0
 
     node_a = _separable_df(90, seed=10)  # large node
     node_b = _separable_df(10, seed=11)  # small node
@@ -344,7 +343,7 @@ def test_central_fedavg_weights_by_node_sample_count_not_naively(monkeypatch) ->
         feature_cols=["x"], target_col="y", state_dict=initial_state,
         global_mean=global_mean, global_std=global_std,
         learning_rate=LEARNING_RATE, local_epochs=LOCAL_EPOCHS,
-        train_ratio=TRAIN_TEST_RATIO, batch_ratio=1.0, seed=RANDOM_SEED,
+        train_ratio=TRAIN_TEST_RATIO, batch_ratio=batch_ratio, seed=RANDOM_SEED,
     )
     update_a = _call_partial(node_a, "partial", **common_kwargs)
     update_b = _call_partial(node_b, "partial", **common_kwargs)
@@ -354,9 +353,40 @@ def test_central_fedavg_weights_by_node_sample_count_not_naively(monkeypatch) ->
     weighted_weight = frac_a * np.array(update_a["state_dict"]["linear.weight"]) + frac_b * np.array(update_b["state_dict"]["linear.weight"])
     naive_weight = 0.5 * np.array(update_a["state_dict"]["linear.weight"]) + 0.5 * np.array(update_b["state_dict"]["linear.weight"])
 
-    central_result = _run_central([node_a, node_b], feature_cols=["x"], target_col="y")
+    central_result = _run_central(
+        [node_a, node_b], feature_cols=["x"], target_col="y", n_rounds=n_rounds, batch_ratio=batch_ratio,
+    )
     actual_weight = np.array(central_result["state_dict"]["linear.weight"])
 
     assert actual_weight == pytest.approx(weighted_weight, abs=1e-5)
     if not np.allclose(weighted_weight, naive_weight, atol=1e-6):
         assert not np.allclose(actual_weight, naive_weight, atol=1e-6)
+
+
+def test_central_n_rounds_is_a_real_override_not_just_a_fallback_default() -> None:
+    # Regression guard: n_rounds/local_epochs/learning_rate/train_ratio/
+    # batch_ratio/seed must be actual central() kwargs that get forwarded to
+    # the sub-tasks, not module globals read directly from the function body
+    # (which a caller could never override without rebuilding the image).
+    df = _separable_df(60, seed=12)
+    result_one_round = _run_central([df], feature_cols=["x"], target_col="y", n_rounds=1)
+    result_many_rounds = _run_central([df], feature_cols=["x"], target_col="y", n_rounds=15)
+
+    assert result_one_round["state_dict"] != result_many_rounds["state_dict"]
+
+
+# ── missing columns ──────────────────────────────────────────────────────────────
+
+
+def test_partial_raises_clear_error_for_missing_column() -> None:
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [0, 1, 0]})
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="logistic_regression")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"missing_col"):
+        client.task.create(
+            input_={
+                "method": "compute_stats",
+                "kwargs": {"feature_cols": ["missing_col"], "target_col": "y"},
+            },
+            organizations=org_ids,
+        )

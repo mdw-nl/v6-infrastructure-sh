@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from vantage6.algorithm.tools.util import info
+from vantage6.algorithm.tools.util import info, error
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
@@ -51,6 +51,17 @@ def add_noise_to_event_times(
     if noise_type == "gaussian":
         return _apply_gaussian_noise(df, time_col, snr)
     return _apply_poisson_noise(df, time_col)
+
+
+def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {missing} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        error(msg)
+        raise ValueError(msg)
 
 
 @algorithm_client
@@ -212,6 +223,7 @@ def get_time_range(
     snr: float = SNR,
     random_seed: int = RANDOM_SEED,
 ) -> dict:
+    _require_columns(df, [time_col, event_col], "get_time_range")
     df_clean = df.dropna(subset=[time_col, event_col])
     info(f"Dataset: {len(df)} rows — {len(df_clean)} usable after dropna")
     if len(df_clean) == 0:
@@ -236,6 +248,7 @@ def compute_events(
     snr: float = SNR,
     random_seed: int = RANDOM_SEED,
 ) -> dict:
+    _require_columns(df, [time_col, event_col], "compute_events")
     df_clean = df.dropna(subset=[time_col, event_col])
     info(f"Computing event table: {len(df_clean)} patients, {len(time_steps)} time steps")
     df_clean = add_noise_to_event_times(df_clean, time_col, noise_type, snr, random_seed)

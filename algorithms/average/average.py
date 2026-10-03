@@ -1,9 +1,20 @@
 import pandas as pd
-from vantage6.algorithm.tools.util import info
+from vantage6.algorithm.tools.util import info, error
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
 AVERAGE_VAR = "age"
+
+
+def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {missing} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        error(msg)
+        raise ValueError(msg)
 
 @algorithm_client
 def central(client: AlgorithmClient, column: str = AVERAGE_VAR) -> dict:
@@ -33,6 +44,7 @@ def central(client: AlgorithmClient, column: str = AVERAGE_VAR) -> dict:
 
 @data(1)
 def partial(df: pd.DataFrame, column: str = AVERAGE_VAR) -> dict:
+    _require_columns(df, [column], "partial")
     info(f"Processing {len(df)} rows for column '{column}'")
     val_sum = float(df[column].sum())
     val_count = int(df[column].count())

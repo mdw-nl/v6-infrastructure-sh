@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import pandas as pd
-from vantage6.algorithm.tools.util import info
+from vantage6.algorithm.tools.util import info, error
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
@@ -37,11 +37,28 @@ def _sd_from_list(serial: dict, n_features: int) -> dict:
     }
 
 
+def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {missing} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        error(msg)
+        raise ValueError(msg)
+
+
 @algorithm_client
 def central(
     client: AlgorithmClient,
     feature_cols: list = FEATURE_COLS,
     target_col: str = TARGET_COL,
+    n_rounds: int = N_ROUNDS,
+    local_epochs: int = LOCAL_EPOCHS,
+    learning_rate: float = LEARNING_RATE,
+    train_ratio: float = TRAIN_TEST_RATIO,
+    batch_ratio: float = BATCH_RATIO,
+    seed: int = RANDOM_SEED,
 ) -> dict:
     t_total = time.time()
     orgs = client.organization.list()
@@ -55,9 +72,9 @@ def central(
     info(f"Organizations : {[org_names[oid] for oid in org_ids]}")
     info(f"Features      : {feature_cols}")
     info(f"Target        : {target_col}")
-    info(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
-    info(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
-    info(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
+    info(f"Rounds        : {n_rounds}  |  Local epochs : {local_epochs}")
+    info(f"Learning rate : {learning_rate}  |  Train ratio  : {train_ratio}")
+    info(f"Batch ratio   : {batch_ratio}  |  Seed         : {seed}")
 
     # ── Phase 1: normalization statistics ────────────────────────────────────
     info("")
@@ -69,8 +86,8 @@ def central(
             "kwargs": {
                 "feature_cols": feature_cols,
                 "target_col": target_col,
-                "train_ratio": TRAIN_TEST_RATIO,
-                "seed": RANDOM_SEED,
+                "train_ratio": train_ratio,
+                "seed": seed,
             },
         },
         organizations=org_ids,
@@ -99,13 +116,13 @@ def central(
     info("")
     info("── PHASE 2: Federated training ─────────────────────────────")
     t0 = time.time()
-    torch.manual_seed(RANDOM_SEED)
+    torch.manual_seed(seed)
     global_model = LogisticRegressionModel(n_features)
     global_state = _sd_to_list(global_model.state_dict())
 
-    for round_num in range(1, N_ROUNDS + 1):
+    for round_num in range(1, n_rounds + 1):
         t_round = time.time()
-        info(f"Round {round_num}/{N_ROUNDS}: submitting to {len(org_ids)} node(s)...")
+        info(f"Round {round_num}/{n_rounds}: submitting to {len(org_ids)} node(s)...")
         task = client.task.create(
             input_={
                 "method": "partial",
@@ -113,13 +130,13 @@ def central(
                     "feature_cols": feature_cols,
                     "target_col": target_col,
                     "state_dict": global_state,
-                    "learning_rate": LEARNING_RATE,
-                    "local_epochs": LOCAL_EPOCHS,
-                    "train_ratio": TRAIN_TEST_RATIO,
-                    "batch_ratio": BATCH_RATIO,
+                    "learning_rate": learning_rate,
+                    "local_epochs": local_epochs,
+                    "train_ratio": train_ratio,
+                    "batch_ratio": batch_ratio,
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
-                    "seed": RANDOM_SEED,
+                    "seed": seed,
                 },
             },
             organizations=org_ids,
@@ -171,8 +188,8 @@ def central(
                     "state_dict": global_state,
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
-                    "train_ratio": TRAIN_TEST_RATIO,
-                    "seed": RANDOM_SEED,
+                    "train_ratio": train_ratio,
+                    "seed": seed,
                 },
             },
             organizations=[oid],
@@ -220,6 +237,7 @@ def compute_stats(
     train_ratio: float = TRAIN_TEST_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
+    _require_columns(df, [*feature_cols, target_col], "compute_stats")
     empty = {"n": 0, "sum": [0.0] * len(feature_cols), "sum_sq": [0.0] * len(feature_cols)}
     info(f"Dataset: {len(df)} total rows")
     df_clean = df.dropna(subset=feature_cols + [target_col])
@@ -253,6 +271,7 @@ def partial(
     batch_ratio: float = BATCH_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
+    _require_columns(df, [*feature_cols, target_col], "partial")
     df_clean = df.dropna(subset=feature_cols + [target_col])
     if len(df_clean) == 0:
         info("No usable rows after dropna, skipping update")
@@ -306,6 +325,7 @@ def evaluate(
     train_ratio: float = TRAIN_TEST_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
+    _require_columns(df, [*feature_cols, target_col], "evaluate")
     info(f"Dataset: {len(df)} total rows")
     df_clean = df.dropna(subset=feature_cols + [target_col])
     info(f"After dropna: {len(df_clean)} usable rows ({len(df) - len(df_clean)} dropped)")

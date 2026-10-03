@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 
@@ -78,6 +79,38 @@ def test_get_time_range_all_nan_returns_zero() -> None:
     df = pd.DataFrame({"Survival.time": [None, None], "deadstatus.event": [None, None]})
     result = _call_partial(df, "get_time_range", time_col="Survival.time", event_col="deadstatus.event")
     assert result == {"n": 0, "max_time": 0.0}
+
+
+def test_get_time_range_raises_clear_error_for_missing_column() -> None:
+    df = pd.DataFrame({"Survival.time": [10, 20], "deadstatus.event": [1, 0]})
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="kaplan_meier")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"not_a_real_column"):
+        client.task.create(
+            input_={
+                "method": "get_time_range",
+                "kwargs": {"time_col": "not_a_real_column", "event_col": "deadstatus.event"},
+            },
+            organizations=org_ids,
+        )
+
+
+def test_compute_events_raises_clear_error_for_missing_column() -> None:
+    df = pd.DataFrame({"Survival.time": [10, 20], "deadstatus.event": [1, 0]})
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="kaplan_meier")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"not_a_real_column"):
+        client.task.create(
+            input_={
+                "method": "compute_events",
+                "kwargs": {
+                    "time_col": "Survival.time",
+                    "event_col": "not_a_real_column",
+                    "time_steps": [0, 10],
+                },
+            },
+            organizations=org_ids,
+        )
 
 
 # ── compute_events ─────────────────────────────────────────────────────────────

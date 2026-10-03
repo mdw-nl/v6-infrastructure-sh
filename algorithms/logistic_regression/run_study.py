@@ -13,6 +13,12 @@ COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
 FEATURE_COLS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 TARGET_COL = "deadstatus.event"
+N_ROUNDS = 20
+LOCAL_EPOCHS = 5
+LEARNING_RATE = 0.1
+TRAIN_TEST_RATIO = 0.8   # fraction of each node's data used for training
+BATCH_RATIO = 0.3        # fraction of the training set sampled per local update
+RANDOM_SEED = 42
 
 
 def main() -> None:
@@ -48,6 +54,9 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Features      : {FEATURE_COLS}")
     print(f"Target        : {TARGET_COL}")
+    print(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
+    print(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
+    print(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
     print()
 
     task = client.task.create(
@@ -58,7 +67,16 @@ def main() -> None:
         image=ALGORITHM_IMAGE,
         input_={
             "method": "central",
-            "kwargs": {"feature_cols": FEATURE_COLS, "target_col": TARGET_COL},
+            "kwargs": {
+                "feature_cols": FEATURE_COLS,
+                "target_col": TARGET_COL,
+                "n_rounds": N_ROUNDS,
+                "local_epochs": LOCAL_EPOCHS,
+                "learning_rate": LEARNING_RATE,
+                "train_ratio": TRAIN_TEST_RATIO,
+                "batch_ratio": BATCH_RATIO,
+                "seed": RANDOM_SEED,
+            },
         },
         databases=[{"label": "default"}],
     )
