@@ -94,6 +94,54 @@ def _map_overall(series: pd.Series) -> pd.Series:
     return keys.map(S_MAP)
 
 
+def _compute_two_year_survival(vital_status: pd.Series, days_until_last_visit: pd.Series) -> pd.Series:
+    """
+    Binary two-year survival outcome (2 years = 2 * 365.24 days), following the
+    20kChallenge definition (see algorithms/admm_logistic_regression/README.md):
+      - vital status missing          -> NaN
+      - dead,  days <= 2y              -> 0
+      - dead,  days  > 2y              -> 1
+      - alive, days <= 2y              -> NaN (insufficient follow-up)
+      - alive, days  > 2y              -> 1
+
+    Computed here (data generation) rather than in the algorithm, since
+    admm_logistic_regression is a generic federated-learning algorithm that
+    expects an already-binary target column, not a data-preparation step.
+    """
+    vs = vital_status.astype(str).str.lower().str.strip()
+    days = pd.to_numeric(days_until_last_visit, errors="coerce")
+    threshold = 2 * 365.24
+
+    out = pd.Series(np.nan, index=vital_status.index, dtype=float)
+    dead = vs == "dead"
+    alive = vs == "alive"
+    out[dead & (days <= threshold)] = 0
+    out[dead & (days > threshold)] = 1
+    out[alive & (days > threshold)] = 1
+    return out
+
+
+def _add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add precomputed columns so federated algorithms that expect already-clean
+    numeric features and a binary target (e.g. admm_logistic_regression,
+    logistic_regression) can run directly against this data without doing any
+    stage-label mapping or outcome derivation themselves:
+      - two_year_survival: binary target, see _compute_two_year_survival
+      - {t,n,m,overall}_stage_code: ordinal numeric codes for the four stage
+        columns, reusing this script's own T_MAP/N_MAP/M_MAP/S_MAP vocabularies
+    """
+    out = df.copy()
+    out["two_year_survival"] = _compute_two_year_survival(
+        out["vital_status"], out["interval_diagnosis_to_last_visit_in_days"]
+    )
+    out["t_stage_code"] = _map_tnm(out["patient_t_stage"], T_MAP)
+    out["n_stage_code"] = _map_tnm(out["patient_n_stage"], N_MAP)
+    out["m_stage_code"] = _map_tnm(out["patient_m_stage"], M_MAP)
+    out["overall_stage_code"] = _map_overall(out["patient_overall_stage"])
+    return out
+
+
 def _prepare_stage_columns_for_dummies(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["patient_t_stage"] = _map_tnm(out["patient_t_stage"], T_MAP)
@@ -603,6 +651,8 @@ def main() -> None:
             "train_auc={:.4f}, val_auc={:.4f}."
             .format(best_attempt, best_metrics.train_auc, best_metrics.val_auc)
         )
+
+    best_df = _add_derived_columns(best_df)
 
     full_csv = output_dir / "beach_signal_full.csv"
     best_df.to_csv(full_csv, index=False)

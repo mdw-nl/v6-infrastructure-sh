@@ -13,10 +13,10 @@ COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
 
 STATISTICS = {
-    "age": ["mean", "std", "minmax", "quantiles"],
-    "gender": ["counts"],
-    "Overall.Stage": ["counts"],
-    "Survival.time": ["mean", "std", "minmax"],
+    "age_at_diagnosis": ["mean", "std", "minmax", "quantiles"],
+    "sex": ["counts"],
+    "disease_stage": ["counts"],
+    "bmi": ["mean", "std", "minmax"],
 }
 FILTERS = {}
 OPTIONS = {}
