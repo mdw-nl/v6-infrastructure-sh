@@ -16,6 +16,33 @@ This mirrors sort_slices()/get_batch_full() from the original argosfeddeep
 repo, reshaped from a per-patient JSON dict into a flat table so it fits
 vantage6's @data(1) contract. Building this manifest is out of scope here.
 
+── Data conditions this algorithm assumes (not validated beyond what's noted) ──
+  - CT only. _normalize_ct's HU windowing (min_bound/max_bound) is a
+    Hounsfield Unit concept specific to CT; it is not a generic intensity
+    normalization and will not make sense applied to MRI or other modalities.
+  - Axial slices, already consistently oriented and resampled to the same
+    in-plane voxel spacing across every patient/node -- the code never reads
+    a NIfTI's affine, so inconsistent orientation/spacing would silently
+    produce wrong (not crashing) results.
+  - Every ct_path/gt_path slice is exactly patch_size x patch_size (passed
+    through central()/partial(), default PATCH_SIZE=512) -- the batch tensor
+    is preallocated at that resolution with no cropping/resizing, and a
+    mismatch now raises a clear ValueError instead of a numpy broadcast
+    error. patch_size must also stay divisible by 32 (the encoder/decoder's
+    downsampling depth in model.py), or shapes won't line up at the skip
+    connection.
+  - gt_path's label values are integers in [0, num_classes) -- consistent
+    with num_classes (also a central()/partial() kwarg, default
+    NUM_CLASSES=2) across every node.
+
+Within that CT/axial/fixed-resolution contract, num_classes, num_channels
+(2.5D context width), and min_bound/max_bound (HU window) are all real
+central()/partial() kwargs -- e.g. a different segmentation target (binary
+tumor vs. multi-organ), a wider slice-neighbor context, or a different
+windowing preset (lung vs. mediastinal) can all be run without rebuilding the
+image. Preparing data to the contract above (manifest building, orientation/
+spacing consistency, label encoding) is still the caller's responsibility.
+
 Known limitation: unlike logistic_regression.py's 4-float state dict,
 ModResNet has ~12-13M parameters. Its weights are gzip+base64 encoded before
 going into the vantage6 task result/input, but that can still be tens of MB
@@ -116,12 +143,29 @@ def dice_score(y_true: torch.Tensor, y_pred: torch.Tensor, ignore_background: bo
         return torch.mean(numerator / denominator).item()
 
 
-def _normalize_ct(arr: np.ndarray) -> np.ndarray:
-    """HU windowing: clip to [MIN_BOUND, MAX_BOUND] and scale to [0, 1]."""
-    return np.clip((arr - MIN_BOUND) / (MAX_BOUND - MIN_BOUND), 0.0, 1.0)
+def _normalize_ct(arr: np.ndarray, min_bound: float = MIN_BOUND, max_bound: float = MAX_BOUND) -> np.ndarray:
+    """HU windowing: clip to [min_bound, max_bound] and scale to [0, 1]."""
+    return np.clip((arr - min_bound) / (max_bound - min_bound), 0.0, 1.0)
 
 
-def _sample_batch(df: pd.DataFrame, batch_size: int, num_channels: int, patch_size: int) -> tuple:
+def _validate_slice_shape(arr: np.ndarray, patch_size: int, path) -> None:
+    expected = (patch_size, patch_size)
+    if arr.shape != expected:
+        raise ValueError(
+            f"Slice at '{path}' has shape {arr.shape}, expected {expected} (patch_size={patch_size}); "
+            "the manifest's slices must match patch_size exactly, since the batch tensor is "
+            "preallocated at that resolution with no cropping/resizing."
+        )
+
+
+def _sample_batch(
+    df: pd.DataFrame,
+    batch_size: int,
+    num_channels: int,
+    patch_size: int,
+    min_bound: float = MIN_BOUND,
+    max_bound: float = MAX_BOUND,
+) -> tuple:
     half = num_channels // 2
     ct_batch = np.zeros((batch_size, num_channels, patch_size, patch_size), dtype=np.float32)
     gt_batch = np.zeros((batch_size, patch_size, patch_size), dtype=np.int64)
@@ -144,9 +188,20 @@ def _sample_batch(df: pd.DataFrame, batch_size: int, num_channels: int, patch_si
         # rather than reproducing the original's occasional out-of-range read.
         for c in range(num_channels):
             neighbor_idx = int(np.clip(center_idx - half + c, 0, n_slices - 1))
-            ct_batch[i, c] = _normalize_ct(nib.load(patient_df.loc[neighbor_idx, CT_COL]).get_fdata())
+            ct_path = patient_df.loc[neighbor_idx, CT_COL]
+            ct_slice = nib.load(ct_path).get_fdata()
+            _validate_slice_shape(ct_slice, patch_size, ct_path)
+            ct_batch[i, c] = _normalize_ct(ct_slice, min_bound, max_bound)
 
-        gt_batch[i] = nib.load(patient_df.loc[center_idx, GT_COL]).get_fdata()
+        gt_path = patient_df.loc[center_idx, GT_COL]
+        gt_slice = nib.load(gt_path).get_fdata()
+        _validate_slice_shape(gt_slice, patch_size, gt_path)
+        # round(), not a bare cast: get_fdata() returns float64, and any NIfTI
+        # header-level scl_slope/scl_inter scaling (common on real clinical
+        # exports, though not on this repo's synthetic data) can turn an exact
+        # label like 1 into e.g. 0.9999997 -- truncating that straight to
+        # int64 silently corrupts ground truth (0.9999997 -> 0, not 1).
+        gt_batch[i] = np.round(gt_slice).astype(np.int64)
 
     return torch.from_numpy(ct_batch), torch.from_numpy(gt_batch)
 
@@ -158,6 +213,11 @@ def central(
     local_steps: int = LOCAL_STEPS,
     batch_size: int = BATCH_SIZE,
     learning_rate: float = LEARNING_RATE,
+    patch_size: int = PATCH_SIZE,
+    num_classes: int = NUM_CLASSES,
+    num_channels: int = NUM_CHANNELS,
+    min_bound: float = MIN_BOUND,
+    max_bound: float = MAX_BOUND,
 ) -> dict:
     orgs = client.organization.list()
     org_ids = [org["id"] for org in orgs]
@@ -168,10 +228,12 @@ def central(
     info("=" * 60)
     info(f"Organizations : {[org_names[oid] for oid in org_ids]}")
     info(f"Rounds        : {n_rounds}  |  Local steps : {local_steps}")
-    info(f"Batch size    : {batch_size}  |  LR          : {learning_rate}")
+    info(f"Batch size    : {batch_size}  |  LR          : {learning_rate}  |  Patch size : {patch_size}")
+    info(f"Classes       : {num_classes}  |  Channels (2.5D context) : {num_channels}")
+    info(f"HU window     : [{min_bound}, {max_bound}]")
 
     torch.manual_seed(RANDOM_SEED)
-    global_model = ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES)
+    global_model = ModResNet(in_channels=num_channels, num_classes=num_classes)
     global_state = _state_dict_to_str(global_model.state_dict())
 
     round_metrics = []
@@ -186,6 +248,11 @@ def central(
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                     "round_num": round_num,
+                    "patch_size": patch_size,
+                    "num_classes": num_classes,
+                    "num_channels": num_channels,
+                    "min_bound": min_bound,
+                    "max_bound": max_bound,
                 },
             },
             organizations=org_ids,
@@ -242,6 +309,11 @@ def partial(
     learning_rate: float = LEARNING_RATE,
     seed: int = RANDOM_SEED,
     round_num: int = 1,
+    patch_size: int = PATCH_SIZE,
+    num_classes: int = NUM_CLASSES,
+    num_channels: int = NUM_CHANNELS,
+    min_bound: float = MIN_BOUND,
+    max_bound: float = MAX_BOUND,
 ) -> dict:
     missing = REQUIRED_COLS - set(df.columns)
     if missing or len(df) == 0:
@@ -255,15 +327,15 @@ def partial(
     # round for a given node, starving later rounds of new training signal.
     random.seed(seed + round_num)
 
-    model = ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES)
+    model = ModResNet(in_channels=num_channels, num_classes=num_classes)
     model.load_state_dict(_state_dict_from_str(state_dict))
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     model.train()
     total_loss, total_dice, n_samples = 0.0, 0.0, 0
     for step in range(local_steps):
-        ct_batch, gt_batch = _sample_batch(df, batch_size, NUM_CHANNELS, PATCH_SIZE)
-        gt_onehot = F.one_hot(gt_batch, NUM_CLASSES).permute(0, 3, 1, 2).float()
+        ct_batch, gt_batch = _sample_batch(df, batch_size, num_channels, patch_size, min_bound, max_bound)
+        gt_onehot = F.one_hot(gt_batch, num_classes).permute(0, 3, 1, 2).float()
 
         optimizer.zero_grad()
         preds = model(ct_batch)

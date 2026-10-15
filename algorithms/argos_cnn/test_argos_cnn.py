@@ -19,6 +19,7 @@ from argos_cnn import (
     _normalize_ct,
     _sample_batch,
     _state_dict_to_str,
+    _validate_slice_shape,
     dice_bce_loss,
     dice_loss,
     dice_score,
@@ -103,6 +104,56 @@ def test_different_seeds_can_select_different_slices(tmp_path, monkeypatch) -> N
         _, gt_batch = _sample_batch(df, batch_size=1, num_channels=NUM_CHANNELS, patch_size=PATCH_SIZE)
         seen_centers.add(gt_batch[0, 0, 0].item())
     assert len(seen_centers) > 1
+
+
+# ── slice-shape validation and ground-truth rounding ──────────────────────────
+
+
+def test_validate_slice_shape_raises_clear_error_on_mismatch() -> None:
+    arr = np.zeros((64, 64))
+    with pytest.raises(ValueError, match=r"shape \(64, 64\).*expected \(512, 512\)"):
+        _validate_slice_shape(arr, patch_size=512, path="some/path.nii.gz")
+
+
+def test_validate_slice_shape_accepts_matching_shape() -> None:
+    _validate_slice_shape(np.zeros((32, 32)), patch_size=32, path="ok.nii.gz")  # must not raise
+
+
+def test_sample_batch_raises_clear_error_when_a_slice_does_not_match_patch_size(tmp_path) -> None:
+    # Regression test: previously a mismatched slice (e.g. a manifest
+    # generated at a different --patch-size than the algorithm's PATCH_SIZE)
+    # would fail deep inside a numpy broadcast assignment with a cryptic
+    # "could not broadcast" error instead of a clear, actionable message.
+    ct_path = tmp_path / "ct_0.nii.gz"
+    gt_path = tmp_path / "gt_0.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((6, 6), dtype=np.float32), np.eye(4)), str(ct_path))  # wrong shape
+    nib.save(nib.Nifti1Image(np.zeros((PATCH_SIZE, PATCH_SIZE), dtype=np.int32), np.eye(4)), str(gt_path))
+    df = pd.DataFrame(
+        [{PATIENT_COL: "p1", SLICE_COL: 0, CT_COL: str(ct_path), GT_COL: str(gt_path), LABEL_COL: 0}]
+    )
+
+    with pytest.raises(ValueError, match="patch_size"):
+        _sample_batch(df, batch_size=1, num_channels=1, patch_size=PATCH_SIZE)
+
+
+def test_sample_batch_rounds_near_integer_ground_truth_instead_of_truncating(tmp_path) -> None:
+    # Regression test: get_fdata() returns float64, and NIfTI header-level
+    # scl_slope/scl_inter scaling (common on real clinical exports) can turn
+    # an exact label like 1 into e.g. 0.9999997. A bare cast to the
+    # preallocated int64 array truncates toward zero (0.9999997 -> 0),
+    # silently corrupting ground truth; rounding first fixes this.
+    ct_path = tmp_path / "ct_0.nii.gz"
+    gt_path = tmp_path / "gt_0.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((PATCH_SIZE, PATCH_SIZE), dtype=np.float32), np.eye(4)), str(ct_path))
+    near_integer_mask = np.full((PATCH_SIZE, PATCH_SIZE), 0.9999997, dtype=np.float64)
+    nib.save(nib.Nifti1Image(near_integer_mask, np.eye(4)), str(gt_path))
+    df = pd.DataFrame(
+        [{PATIENT_COL: "p1", SLICE_COL: 0, CT_COL: str(ct_path), GT_COL: str(gt_path), LABEL_COL: 1}]
+    )
+
+    _, gt_batch = _sample_batch(df, batch_size=1, num_channels=1, patch_size=PATCH_SIZE)
+
+    assert gt_batch[0].unique().tolist() == [1]  # not [0], which a bare truncating cast would give
 
 
 # ── model.py: architecture ────────────────────────────────────────────────────
@@ -276,8 +327,7 @@ def _make_manifest_with_shape(tmp_path, prefix: str, n_slices: int, patch_size: 
     return pd.DataFrame(rows)
 
 
-def test_partial_reports_unusable_dataset_when_required_columns_missing(monkeypatch) -> None:
-    monkeypatch.setattr(argos_cnn, "PATCH_SIZE", PATCH_SIZE)
+def test_partial_reports_unusable_dataset_when_required_columns_missing() -> None:
     df = pd.DataFrame({"some_other_column": [1, 2, 3]})
     torch.manual_seed(0)
     state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES).state_dict())
@@ -293,8 +343,7 @@ def test_partial_reports_unusable_dataset_when_required_columns_missing(monkeypa
     assert result["state_dict"] == state  # echoed back unchanged, not a fresh/corrupted model
 
 
-def test_partial_trains_and_returns_finite_metrics(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(argos_cnn, "PATCH_SIZE", 64)
+def test_partial_trains_and_returns_finite_metrics(tmp_path) -> None:
     df = _make_manifest_with_shape(tmp_path, "a", n_slices=6, patch_size=64)
     torch.manual_seed(0)
     state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES).state_dict())
@@ -304,7 +353,10 @@ def test_partial_trains_and_returns_finite_metrics(tmp_path, monkeypatch) -> Non
     task = client.task.create(
         input_={
             "method": "partial",
-            "kwargs": {"state_dict": state, "local_steps": 2, "batch_size": 1, "learning_rate": 1e-4, "round_num": 1},
+            "kwargs": {
+                "state_dict": state, "local_steps": 2, "batch_size": 1, "learning_rate": 1e-4,
+                "round_num": 1, "patch_size": 64,
+            },
         },
         organizations=org_ids,
     )
@@ -314,6 +366,101 @@ def test_partial_trains_and_returns_finite_metrics(tmp_path, monkeypatch) -> Non
     assert np.isfinite(result["loss"])
     assert np.isfinite(result["dice"])
     assert 0.0 <= result["dice"] <= 1.0
+
+
+def _make_manifest_with_classes(tmp_path, prefix: str, n_slices: int, patch_size: int, num_classes: int) -> pd.DataFrame:
+    rows = []
+    for i in range(n_slices):
+        ct_path = tmp_path / f"{prefix}_ct_{i}.nii.gz"
+        gt_path = tmp_path / f"{prefix}_gt_{i}.nii.gz"
+        nib.save(nib.Nifti1Image(np.random.rand(patch_size, patch_size).astype(np.float32) * 100 - 300, np.eye(4)), str(ct_path))
+        mask = np.zeros((patch_size, patch_size), dtype=np.int32)
+        label = i % num_classes
+        if label > 0:
+            mask[: patch_size // 2, : patch_size // 2] = label  # use every class, not just 0/1
+        nib.save(nib.Nifti1Image(mask, np.eye(4)), str(gt_path))
+        rows.append(
+            {PATIENT_COL: f"{prefix}_patient", SLICE_COL: i, CT_COL: str(ct_path), GT_COL: str(gt_path), LABEL_COL: int(label > 0)}
+        )
+    return pd.DataFrame(rows)
+
+
+def test_partial_num_classes_is_a_real_override_not_just_a_fallback_default(tmp_path) -> None:
+    # Regression guard: num_classes must actually control both the model's
+    # output channel count and F.one_hot's cardinality -- not be accepted as
+    # a kwarg and silently ignored in favor of the module default (2).
+    num_classes = 4
+    df = _make_manifest_with_classes(tmp_path, "a", n_slices=8, patch_size=64, num_classes=num_classes)
+    torch.manual_seed(0)
+    state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=num_classes).state_dict())
+
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    task = client.task.create(
+        input_={
+            "method": "partial",
+            "kwargs": {
+                "state_dict": state, "local_steps": 1, "batch_size": 1, "learning_rate": 1e-4,
+                "round_num": 1, "patch_size": 64, "num_classes": num_classes,
+            },
+        },
+        organizations=org_ids,
+    )
+    result = client.wait_for_results(task.get("id"))[0]
+
+    assert np.isfinite(result["loss"])
+    assert np.isfinite(result["dice"])
+    # A GT mask containing a class index (3) that doesn't fit in the default
+    # num_classes=2 would make F.one_hot raise -- reaching a finite result at
+    # all proves num_classes=4 was actually used, not silently defaulted.
+
+
+def test_partial_num_channels_is_a_real_override_not_just_a_fallback_default(tmp_path) -> None:
+    # Regression guard: num_channels must control both the model's input
+    # channel count and the 2.5D context width _sample_batch stacks.
+    num_channels = 5
+    df = _make_manifest_with_shape(tmp_path, "a", n_slices=8, patch_size=64)
+    torch.manual_seed(0)
+    state = _state_dict_to_str(ModResNet(in_channels=num_channels, num_classes=NUM_CLASSES).state_dict())
+
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    task = client.task.create(
+        input_={
+            "method": "partial",
+            "kwargs": {
+                "state_dict": state, "local_steps": 1, "batch_size": 1, "learning_rate": 1e-4,
+                "round_num": 1, "patch_size": 64, "num_channels": num_channels,
+            },
+        },
+        organizations=org_ids,
+    )
+    result = client.wait_for_results(task.get("id"))[0]
+
+    assert np.isfinite(result["loss"])
+    assert np.isfinite(result["dice"])
+    # A state_dict built for in_channels=5 would mismatch the stem conv's
+    # expected input channels if _sample_batch still stacked the default 3 --
+    # reaching a finite result proves num_channels=5 was actually threaded in.
+
+
+def test_sample_batch_min_max_bound_are_real_overrides_not_just_fallback_defaults(tmp_path) -> None:
+    # Regression guard: min_bound/max_bound must actually reach _normalize_ct
+    # inside _sample_batch, not just be accepted and ignored in favor of the
+    # module defaults (-800/200).
+    ct_path = tmp_path / "ct_0.nii.gz"
+    gt_path = tmp_path / "gt_0.nii.gz"
+    nib.save(nib.Nifti1Image(np.full((8, 8), 50.0, dtype=np.float32), np.eye(4)), str(ct_path))
+    nib.save(nib.Nifti1Image(np.zeros((8, 8), dtype=np.int32), np.eye(4)), str(gt_path))
+    df = pd.DataFrame([{PATIENT_COL: "p1", SLICE_COL: 0, CT_COL: str(ct_path), GT_COL: str(gt_path), LABEL_COL: 0}])
+
+    # With the module defaults (-800, 200), HU=50 normalizes to (50-(-800))/(200-(-800)) = 0.85.
+    ct_default, _ = _sample_batch(df, batch_size=1, num_channels=1, patch_size=8)
+    assert ct_default[0, 0, 0, 0].item() == pytest.approx(0.85)
+
+    # With a custom window of [0, 100], HU=50 should normalize to exactly 0.5 instead.
+    ct_custom, _ = _sample_batch(df, batch_size=1, num_channels=1, patch_size=8, min_bound=0, max_bound=100)
+    assert ct_custom[0, 0, 0, 0].item() == pytest.approx(0.5)
 
 
 def test_central_model_init_is_reproducible_given_the_module_seed(tmp_path, monkeypatch) -> None:
@@ -328,8 +475,6 @@ def test_central_model_init_is_reproducible_given_the_module_seed(tmp_path, monk
 
 
 def test_central_fedavg_weights_by_node_dataset_size_not_naively(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(argos_cnn, "PATCH_SIZE", 64)
-
     node_a = _make_manifest_with_shape(tmp_path, "a", n_slices=9, patch_size=64)  # large node
     node_b = _make_manifest_with_shape(tmp_path, "b", n_slices=3, patch_size=64)  # small node
 
@@ -341,6 +486,7 @@ def test_central_fedavg_weights_by_node_dataset_size_not_naively(tmp_path, monke
         "batch_size": 1,
         "learning_rate": 1e-4,
         "round_num": 1,
+        "patch_size": 64,
     }
 
     def _call(df):
@@ -368,7 +514,10 @@ def test_central_fedavg_weights_by_node_dataset_size_not_naively(tmp_path, monke
     )
     org_ids = [organization["id"] for organization in client.organization.list()]
     task = client.task.create(
-        input_={"method": "central", "kwargs": {"n_rounds": 1, "local_steps": 1, "batch_size": 1, "learning_rate": 1e-4}},
+        input_={
+            "method": "central",
+            "kwargs": {"n_rounds": 1, "local_steps": 1, "batch_size": 1, "learning_rate": 1e-4, "patch_size": 64},
+        },
         organizations=[org_ids[0]],
     )
     central_result = client.wait_for_results(task.get("id"))[0]
