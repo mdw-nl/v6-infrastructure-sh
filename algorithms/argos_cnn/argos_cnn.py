@@ -15,6 +15,12 @@ a per-slice manifest, not raw NIfTI folders — one row per axial CT slice:
 This mirrors sort_slices()/get_batch_full() from the original argosfeddeep
 repo, reshaped from a per-patient JSON dict into a flat table so it fits
 vantage6's @data(1) contract. Building this manifest is out of scope here.
+Column names are central()/partial() kwargs (patient_col/slice_col/ct_col/
+gt_col/label_col, defaults as above) if your manifest uses different names.
+A manifest missing any of them now raises a clear ValueError instead of
+silently contributing nothing; an empty-but-correctly-shaped manifest (e.g.
+a node that legitimately has no data this round) still contributes 0
+without raising.
 
 ── Data conditions this algorithm assumes (not validated beyond what's noted) ──
   - CT only. _normalize_ct's HU windowing (min_bound/max_bound) is a
@@ -36,12 +42,17 @@ vantage6's @data(1) contract. Building this manifest is out of scope here.
     NUM_CLASSES=2) across every node.
 
 Within that CT/axial/fixed-resolution contract, num_classes, num_channels
-(2.5D context width), and min_bound/max_bound (HU window) are all real
+(2.5D context width), min_bound/max_bound (HU window), and seed are all real
 central()/partial() kwargs -- e.g. a different segmentation target (binary
-tumor vs. multi-organ), a wider slice-neighbor context, or a different
-windowing preset (lung vs. mediastinal) can all be run without rebuilding the
-image. Preparing data to the contract above (manifest building, orientation/
-spacing consistency, label encoding) is still the caller's responsibility.
+tumor vs. multi-organ), a wider slice-neighbor context, a different windowing
+preset (lung vs. mediastinal), or a different batch-sampling seed can all be
+run without rebuilding the image. seed passed to central() both seeds the
+initial global model's weights (torch.manual_seed) and is forwarded into
+every partial() task's kwargs, where it drives that round's batch sampling
+(random.seed(seed + round_num)) -- previously central() had no seed
+parameter at all, so every run used the module's RANDOM_SEED regardless.
+Preparing data to the contract above (manifest building, orientation/spacing
+consistency, label encoding) is still the caller's responsibility.
 
 Known limitation: unlike logistic_regression.py's 4-float state dict,
 ModResNet has ~12-13M parameters. Its weights are gzip+base64 encoded before
@@ -71,7 +82,7 @@ import torch
 import torch.nn.functional as F
 import nibabel as nib
 
-from vantage6.algorithm.tools.util import info
+from vantage6.algorithm.tools.util import info, warn
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
@@ -82,7 +93,6 @@ SLICE_COL = "slice_index"
 CT_COL = "ct_path"
 GT_COL = "gt_path"
 LABEL_COL = "has_tumor"
-REQUIRED_COLS = {PATIENT_COL, SLICE_COL, CT_COL, GT_COL, LABEL_COL}
 
 NUM_CLASSES = 2
 NUM_CHANNELS = 3   # 2.5D: stack of 3 adjacent axial slices, matches params.json's patch_shape
@@ -158,6 +168,17 @@ def _validate_slice_shape(arr: np.ndarray, patch_size: int, path) -> None:
         )
 
 
+def _require_columns(df: pd.DataFrame, columns: set, method_name: str) -> None:
+    missing = columns - set(df.columns)
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {sorted(missing)} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        warn(msg)
+        raise ValueError(msg)
+
+
 def _sample_batch(
     df: pd.DataFrame,
     batch_size: int,
@@ -165,17 +186,22 @@ def _sample_batch(
     patch_size: int,
     min_bound: float = MIN_BOUND,
     max_bound: float = MAX_BOUND,
+    patient_col: str = PATIENT_COL,
+    slice_col: str = SLICE_COL,
+    ct_col: str = CT_COL,
+    gt_col: str = GT_COL,
+    label_col: str = LABEL_COL,
 ) -> tuple:
     half = num_channels // 2
     ct_batch = np.zeros((batch_size, num_channels, patch_size, patch_size), dtype=np.float32)
     gt_batch = np.zeros((batch_size, patch_size, patch_size), dtype=np.int64)
-    patient_ids = df[PATIENT_COL].unique()
+    patient_ids = df[patient_col].unique()
 
     for i in range(batch_size):
-        patient_df = df[df[PATIENT_COL] == random.choice(patient_ids)].sort_values(SLICE_COL).reset_index(drop=True)
+        patient_df = df[df[patient_col] == random.choice(patient_ids)].sort_values(slice_col).reset_index(drop=True)
         n_slices = len(patient_df)
 
-        positive_rows = patient_df[patient_df[LABEL_COL] == 1]
+        positive_rows = patient_df[patient_df[label_col] == 1]
         if random.random() < POSITIVE_SLICE_BIAS and len(positive_rows) > 0:
             # random.choice (not pandas' .sample(), which draws from numpy's
             # global RNG) so this stays governed by the random.seed() call
@@ -188,12 +214,12 @@ def _sample_batch(
         # rather than reproducing the original's occasional out-of-range read.
         for c in range(num_channels):
             neighbor_idx = int(np.clip(center_idx - half + c, 0, n_slices - 1))
-            ct_path = patient_df.loc[neighbor_idx, CT_COL]
+            ct_path = patient_df.loc[neighbor_idx, ct_col]
             ct_slice = nib.load(ct_path).get_fdata()
             _validate_slice_shape(ct_slice, patch_size, ct_path)
             ct_batch[i, c] = _normalize_ct(ct_slice, min_bound, max_bound)
 
-        gt_path = patient_df.loc[center_idx, GT_COL]
+        gt_path = patient_df.loc[center_idx, gt_col]
         gt_slice = nib.load(gt_path).get_fdata()
         _validate_slice_shape(gt_slice, patch_size, gt_path)
         # round(), not a bare cast: get_fdata() returns float64, and any NIfTI
@@ -218,6 +244,12 @@ def central(
     num_channels: int = NUM_CHANNELS,
     min_bound: float = MIN_BOUND,
     max_bound: float = MAX_BOUND,
+    seed: int = RANDOM_SEED,
+    patient_col: str = PATIENT_COL,
+    slice_col: str = SLICE_COL,
+    ct_col: str = CT_COL,
+    gt_col: str = GT_COL,
+    label_col: str = LABEL_COL,
 ) -> dict:
     orgs = client.organization.list()
     org_ids = [org["id"] for org in orgs]
@@ -230,9 +262,9 @@ def central(
     info(f"Rounds        : {n_rounds}  |  Local steps : {local_steps}")
     info(f"Batch size    : {batch_size}  |  LR          : {learning_rate}  |  Patch size : {patch_size}")
     info(f"Classes       : {num_classes}  |  Channels (2.5D context) : {num_channels}")
-    info(f"HU window     : [{min_bound}, {max_bound}]")
+    info(f"HU window     : [{min_bound}, {max_bound}]  |  Seed : {seed}")
 
-    torch.manual_seed(RANDOM_SEED)
+    torch.manual_seed(seed)
     global_model = ModResNet(in_channels=num_channels, num_classes=num_classes)
     global_state = _state_dict_to_str(global_model.state_dict())
 
@@ -253,6 +285,12 @@ def central(
                     "num_channels": num_channels,
                     "min_bound": min_bound,
                     "max_bound": max_bound,
+                    "seed": seed,
+                    "patient_col": patient_col,
+                    "slice_col": slice_col,
+                    "ct_col": ct_col,
+                    "gt_col": gt_col,
+                    "label_col": label_col,
                 },
             },
             organizations=org_ids,
@@ -314,10 +352,15 @@ def partial(
     num_channels: int = NUM_CHANNELS,
     min_bound: float = MIN_BOUND,
     max_bound: float = MAX_BOUND,
+    patient_col: str = PATIENT_COL,
+    slice_col: str = SLICE_COL,
+    ct_col: str = CT_COL,
+    gt_col: str = GT_COL,
+    label_col: str = LABEL_COL,
 ) -> dict:
-    missing = REQUIRED_COLS - set(df.columns)
-    if missing or len(df) == 0:
-        info(f"Dataset unusable (missing columns: {missing}, rows: {len(df)}), skipping local training")
+    _require_columns(df, {patient_col, slice_col, ct_col, gt_col, label_col}, "partial")
+    if len(df) == 0:
+        info("Dataset is empty, skipping local training")
         return {"state_dict": state_dict, "n": 0, "loss": 0.0, "dice": 0.0}
 
     n_rows = len(df)
@@ -334,7 +377,10 @@ def partial(
     model.train()
     total_loss, total_dice, n_samples = 0.0, 0.0, 0
     for step in range(local_steps):
-        ct_batch, gt_batch = _sample_batch(df, batch_size, num_channels, patch_size, min_bound, max_bound)
+        ct_batch, gt_batch = _sample_batch(
+            df, batch_size, num_channels, patch_size, min_bound, max_bound,
+            patient_col, slice_col, ct_col, gt_col, label_col,
+        )
         gt_onehot = F.one_hot(gt_batch, num_classes).permute(0, 3, 1, 2).float()
 
         optimizer.zero_grad()

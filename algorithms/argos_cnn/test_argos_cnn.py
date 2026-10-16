@@ -327,8 +327,28 @@ def _make_manifest_with_shape(tmp_path, prefix: str, n_slices: int, patch_size: 
     return pd.DataFrame(rows)
 
 
-def test_partial_reports_unusable_dataset_when_required_columns_missing() -> None:
+def test_partial_raises_clear_error_for_missing_columns() -> None:
+    # Regression test: a misconfigured manifest used to silently contribute
+    # n=0 forever with no loud error. It must now raise, naming the missing
+    # columns, the same contract as every other algorithm's _require_columns.
     df = pd.DataFrame({"some_other_column": [1, 2, 3]})
+    torch.manual_seed(0)
+    state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES).state_dict())
+
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match="patient_id"):
+        client.task.create(
+            input_={"method": "partial", "kwargs": {"state_dict": state, "local_steps": 1, "batch_size": 1}},
+            organizations=org_ids,
+        )
+
+
+def test_partial_returns_zero_contribution_for_an_empty_but_correctly_shaped_dataset() -> None:
+    # A node that legitimately has no rows this round (all required columns
+    # present, just zero rows) is a different case from a misconfigured
+    # manifest -- it must still contribute 0 without raising.
+    df = pd.DataFrame(columns=[PATIENT_COL, SLICE_COL, CT_COL, GT_COL, LABEL_COL])
     torch.manual_seed(0)
     state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES).state_dict())
 
@@ -463,6 +483,65 @@ def test_sample_batch_min_max_bound_are_real_overrides_not_just_fallback_default
     assert ct_custom[0, 0, 0, 0].item() == pytest.approx(0.5)
 
 
+def test_central_seed_is_a_real_override_for_the_initial_model_weights() -> None:
+    # Regression guard: previously central() had no seed parameter at all,
+    # so every run used RANDOM_SEED regardless of what a caller might want.
+    # n_rounds=0 isolates just the seed's effect on weight init -- central()
+    # returns before ever creating a partial task, so no node data is read.
+    df = pd.DataFrame(columns=[PATIENT_COL, SLICE_COL, CT_COL, GT_COL, LABEL_COL])
+
+    def _run(seed: int) -> dict:
+        client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+        org_ids = [organization["id"] for organization in client.organization.list()]
+        task = client.task.create(
+            input_={"method": "central", "kwargs": {"n_rounds": 0, "seed": seed}},
+            organizations=[org_ids[0]],
+        )
+        return client.wait_for_results(task.get("id"))[0]
+
+    result_a = _run(1)
+    result_b = _run(2)
+    assert result_a["state_dict"] != result_b["state_dict"]
+
+
+def test_partial_column_names_are_real_overrides_not_just_fallback_defaults(tmp_path) -> None:
+    # Regression guard: patient_col/slice_col/ct_col/gt_col/label_col must
+    # actually control which columns _sample_batch reads, not be accepted
+    # and ignored in favor of the module defaults.
+    df = _make_manifest_with_shape(tmp_path, "a", n_slices=6, patch_size=64)
+    df = df.rename(columns={PATIENT_COL: "pid", SLICE_COL: "idx", CT_COL: "ct", GT_COL: "gt", LABEL_COL: "tumor"})
+    torch.manual_seed(0)
+    state = _state_dict_to_str(ModResNet(in_channels=NUM_CHANNELS, num_classes=NUM_CLASSES).state_dict())
+
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+
+    # The default column names must fail against this renamed manifest.
+    with pytest.raises(ValueError, match="patient_id"):
+        client.task.create(
+            input_={
+                "method": "partial",
+                "kwargs": {"state_dict": state, "local_steps": 1, "batch_size": 1, "patch_size": 64},
+            },
+            organizations=org_ids,
+        )
+
+    # Matching column-name kwargs must succeed.
+    task = client.task.create(
+        input_={
+            "method": "partial",
+            "kwargs": {
+                "state_dict": state, "local_steps": 1, "batch_size": 1, "patch_size": 64,
+                "patient_col": "pid", "slice_col": "idx", "ct_col": "ct", "gt_col": "gt", "label_col": "tumor",
+            },
+        },
+        organizations=org_ids,
+    )
+    result = client.wait_for_results(task.get("id"))[0]
+    assert result["n"] == 6
+    assert np.isfinite(result["loss"])
+
+
 def test_central_model_init_is_reproducible_given_the_module_seed(tmp_path, monkeypatch) -> None:
     # Regression test for the missing torch.manual_seed() bug (the same
     # class of bug fixed in logistic_regression.py): the initial global
@@ -531,7 +610,10 @@ def test_central_fedavg_weights_by_node_dataset_size_not_naively(tmp_path, monke
 
 
 def test_central_stops_early_when_no_organization_has_usable_data() -> None:
-    df = pd.DataFrame({"some_other_column": [1, 2, 3]})  # missing REQUIRED_COLS
+    # Correctly-shaped but empty data (not a column-config error) is the
+    # legitimate "nothing to train on" case central() should gracefully stop
+    # for.
+    df = pd.DataFrame(columns=[PATIENT_COL, SLICE_COL, CT_COL, GT_COL, LABEL_COL])
     client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
     org_ids = [organization["id"] for organization in client.organization.list()]
     task = client.task.create(
@@ -540,3 +622,17 @@ def test_central_stops_early_when_no_organization_has_usable_data() -> None:
     )
     result = client.wait_for_results(task.get("id"))[0]
     assert result["n_rounds_completed"] == 0
+
+
+def test_central_raises_clear_error_when_a_node_has_missing_columns() -> None:
+    # A column-config error must surface loudly through central() too, not
+    # be silently absorbed into "0 rounds completed" the way an actually
+    # empty dataset legitimately is (see the test above).
+    df = pd.DataFrame({"some_other_column": [1, 2, 3]})
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match="patient_id"):
+        client.task.create(
+            input_={"method": "central", "kwargs": {"n_rounds": 2, "local_steps": 1, "batch_size": 1}},
+            organizations=[org_ids[0]],
+        )

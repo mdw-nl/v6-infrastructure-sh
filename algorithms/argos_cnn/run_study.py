@@ -48,7 +48,11 @@ def main() -> None:
     print(f"Collaboration : {collaboration['name']} (id={collaboration_id})")
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
-    print("Hyperparameters: using argos_cnn.py's central() defaults (N_ROUNDS/LOCAL_STEPS/BATCH_SIZE/LEARNING_RATE/PATCH_SIZE/NUM_CLASSES/NUM_CHANNELS/MIN_BOUND/MAX_BOUND)")
+    print(
+        "Hyperparameters: using argos_cnn.py's central() defaults "
+        "(N_ROUNDS/LOCAL_STEPS/BATCH_SIZE/LEARNING_RATE/PATCH_SIZE/NUM_CLASSES/"
+        "NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the manifest column names)"
+    )
     print()
 
     task = client.task.create(
@@ -60,9 +64,11 @@ def main() -> None:
         input_={
             "method": "central",
             # No hyperparameter kwargs here on purpose: central()'s own
-            # defaults (N_ROUNDS/LOCAL_STEPS/BATCH_SIZE/LEARNING_RATE/PATCH_SIZE/NUM_CLASSES/NUM_CHANNELS/MIN_BOUND/MAX_BOUND in
-            # argos_cnn.py) are the single source of truth. Passing copies
-            # here would silently override them if the two ever drifted.
+            # defaults (N_ROUNDS/LOCAL_STEPS/BATCH_SIZE/LEARNING_RATE/PATCH_SIZE/
+            # NUM_CLASSES/NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the
+            # manifest column names, all in argos_cnn.py) are the single source
+            # of truth. Passing copies here would silently override them if the
+            # two ever drifted.
             "kwargs": {},
         },
         # Only "default" (the CSV manifest) is requested here — the "nifti"
