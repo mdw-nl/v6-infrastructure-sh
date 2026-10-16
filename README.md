@@ -140,8 +140,8 @@ state, and run `infra.sh up` again.
 
 This is for a throwaway local registry, useful when debugging a node that can't see a
 locally-built image (e.g. Docker context isolation). If you just want to skip building
-an `algorithms/` image altogether, use the published GHCR image instead — see **Using a
-published image instead of building** above.
+an `algorithms/` image altogether, use the published GHCR image instead — see
+[algorithms/README.md](algorithms/README.md)'s **Using a published image instead of building**.
 
 If nodes report `non-existing Docker image`, use a local registry and submit
 tasks with a registry-backed image reference:
@@ -187,109 +187,11 @@ Available algorithms:
 | `argos_cnn/` | Federated ModResNet (PyTorch) for CT/GTV tumor segmentation — see **Argos CNN** below |
 | `admm_logistic_regression/` | Federated logistic regression via ADMM consensus — reproduces a centralized/pooled fit's coefficients, on the same default LUNG1 data as `logistic_regression/` — see **ADMM logistic regression** below |
 
-Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see **Changing variables without rebuilding the image** below for how to override the important ones (the data columns) per run from `run_study.py`.
+Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see [algorithms/README.md](algorithms/README.md)'s **Changing variables without rebuilding the image** for how to override the important ones (the data columns) per run from `run_study.py`.
 
 Note there are two logistic regression implementations in this repo, both taking the same `feature_cols`/`target_col` arguments and assuming already-numeric features plus an already-binary target (no categorical encoding or outcome derivation — that's a data-preparation concern, not this algorithm's): `logistic_regression/` trains a PyTorch model with federated averaging of weights across rounds (an approximation whose accuracy depends on rounds/epochs/batch size), while `admm_logistic_regression/` (see below) uses ADMM consensus optimization, which converges to the same coefficients as a centralized/pooled fit — see `algorithms/admm_logistic_regression/README.md` for a full side-by-side comparison of the two.
 
-### Python environment (uv)
-
-A single `pyproject.toml` at the **repo root** covers all dependencies for both `algorithms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Then create the environment from the repo root:
-
-```bash
-uv sync
-```
-
-This creates one `.venv` at the repo root, shared by both `algorithms/` and `data/`. Activate it or prefix commands with `uv run` from the root (e.g. `uv run python algorithms/average/run_study.py`).
-
-### Building an algorithm image
-
-Each algorithm must be built as a Docker image before the nodes can execute it. Build from the repo root so the tag matches what `run_study.py` expects:
-
-```bash
-# Average
-docker build -t average:latest algorithms/average/
-
-# Logistic regression
-docker build -t logistic_regression:latest algorithms/logistic_regression/
-
-# Kaplan-Meier
-docker build -t kaplan_meier:latest algorithms/kaplan_meier/
-
-# Cox proportional hazards
-docker build -t coxph:latest algorithms/coxph/
-
-# Federated descriptive statistics
-docker build -t fed_statistics:latest algorithms/fed_statistics/
-```
-
-Because the nodes run inside Docker on the same host daemon, no registry push is needed for local testing. If nodes report `non-existing Docker image` anyway, see the **Local image registry** section.
-
-### Using a published image instead of building
-
-You don't have to build any algorithm image yourself. Every algorithm in `algorithms/` is built and published automatically by `.github/workflows/build-algorithm-images.yaml` on every merge to `main`, as a public image at:
-
-```text
-ghcr.io/mdw-nl/v6-infrastructure-sh/<algorithm-folder-name>:latest
-```
-
-e.g. `ghcr.io/mdw-nl/v6-infrastructure-sh/average:latest`, `ghcr.io/mdw-nl/v6-infrastructure-sh/argos_cnn:latest`. These are public — no `docker login` or credentials needed to pull them.
-
-To use one instead of building locally, just point that algorithm's `run_study.py` at the full registry reference instead of the bare local tag:
-
-```python
-# instead of:
-ALGORITHM_IMAGE = "average:latest"
-# use:
-ALGORITHM_IMAGE = "ghcr.io/mdw-nl/v6-infrastructure-sh/average:latest"
-```
-
-No code or Dockerfile changes needed — `run_study.py` just passes this string straight through as the task's `image`, and the vantage6 **node** (not your shell) pulls it from GHCR itself the first time a task references it, the same way it already pulls the vantage6 server/node/UI images. Skip the `docker build` step for that algorithm entirely. Each of the 7 current algorithms (`average`/`logistic_regression`/`admm_logistic_regression`/`coxph`/`fed_statistics`/`kaplan_meier`/`argos_cnn`) has been verified to run correctly this way.
-
-Also tag with a specific commit SHA (visible in the package's version list on GitHub, or as the second tag the workflow pushes alongside `:latest`) instead of `:latest` if you want to pin to an exact, reproducible build rather than whatever the most recent merge to `main` currently points at.
-
-### Running a study
-
-With the infrastructure up (`infra.sh up`) and the image built:
-
-```bash
-# from the repo root
-uv run python algorithms/average/run_study.py
-uv run python algorithms/logistic_regression/run_study.py
-uv run python algorithms/kaplan_meier/run_study.py
-uv run python algorithms/coxph/run_study.py
-uv run python algorithms/fed_statistics/run_study.py
-```
-
-The script authenticates against the local vantage6 server, submits the central task, waits for all nodes to complete, and prints the results.
-
-### Changing variables without rebuilding the image
-
-To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, `FEATURE_COLS`/`TARGET_COL` in `logistic_regression/run_study.py`, or `TIME_COL`/`OUTCOME_COL`/`EXPL_VARS` in `coxph/run_study.py`), just edit the constants at the top of that algorithm's `run_study.py` and re-run it — no image rebuild needed. The constants in the algorithm file itself (`average.py`, etc.) are only the fallback defaults.
-
-`coxph/` runs against the same LUNG1 data as `kaplan_meier/` (`Survival.time`/`deadstatus.event`), with `age`, `clinical.T.Stage`, `Clinical.N.Stage`, `Clinical.M.Stage` as the default covariates — no new node profile needed. It ships a `test_math_correctness.py` (run with `uv run pytest algorithms/coxph/`) that validates the federated Newton-Raphson fit against a directly-fit reference Cox model on a bundled test fixture — the actual proof the ported math wasn't broken in translation, independent of any live vantage6 infrastructure.
-
-`fed_statistics/` also runs against LUNG1 (no new node profile needed, since it works on any tabular CSV) — override `STATISTICS`/`FILTERS`/`OPTIONS` in `fed_statistics/run_study.py` to request different columns/statistics per run. `OPTIONS` controls privacy suppression (`suppress_threshold`, `suppress_secondary`/`suppress_key`) and quantile bootstrap iterations; see `algorithms/fed_statistics/test_stats_correctness.py` (run with `uv run pytest algorithms/fed_statistics/`) for worked examples of each statistic plus the secondary-suppression mechanism.
-
-`kaplan_meier/run_study.py` also exposes `NOISE_TYPE`/`SNR`/`RANDOM_SEED` — set `NOISE_TYPE` to `"gaussian"` (with `SNR > 0`) or `"poisson"` to perturb event times as an extra privacy layer before aggregation, on top of the existing `TIME_COL`/`EVENT_COL`/`STEP_DAYS` overrides. Leave `RANDOM_SEED` as `None` to let `central()` generate a fresh one per run (echoed back in the result for reproducibility), or set it to repeat a specific run's noise exactly. Both federated phases (`get_time_range`/`compute_events`) apply identical noise given the same seed. `uv run pytest algorithms/kaplan_meier/` covers both the core survival-curve math (`test_kaplan_meier.py` — cross-checked against an independent classical product-limit KM reference and against a single-organization pooled run, since the federated split/sum must reproduce the pooled result exactly) and the noise-injection mechanism (`test_noise_injection.py` — cross-phase consistency and backward-compatibility). Default `NOISE_TYPE = "none"` reproduces the pre-noise-injection curve exactly.
-
-`logistic_regression/run_study.py` also exposes `N_ROUNDS`/`LOCAL_EPOCHS`/`LEARNING_RATE`/`TRAIN_TEST_RATIO`/`BATCH_RATIO`/`RANDOM_SEED` as real `central()` keyword arguments (forwarded into every `compute_stats`/`partial`/`evaluate` sub-task) — previously these were module globals read directly inside `central()`'s body, so changing them required editing `logistic_regression.py` and rebuilding the image; now they're overridable from `run_study.py` like every other algorithm's hyperparameters.
-
-`average/`, `coxph/`, `kaplan_meier/`, and `logistic_regression/` now also raise a clear `ValueError` (listing the missing column name(s) and the dataset's available columns) instead of a raw `KeyError` when a configured column doesn't exist on a node's data — the same contract `fed_statistics/` already had via `_validate_column`/`_numeric_series`. This surfaces a typo'd column name in task logs immediately instead of as a buried pandas traceback.
-
-### Adding your own algorithm
-
-1. Create a new folder under `algorithms/` with an algorithm module and a `Dockerfile`.
-2. Add any new dependencies to the root `pyproject.toml` and run `uv sync`.
-3. Build the image: `docker build -t my-algo:latest algorithms/my-algo/`
-4. Write a `run_study.py` that points at `my-algo:latest` and calls `"method": "central"`.
-
-If the nodes report `non-existing Docker image`, see the **Local image registry** section below.
+Building images, running studies, using the published GHCR images instead of building, overriding variables without rebuilding, the full per-algorithm data-contracts table, and adding your own algorithm are all documented in [algorithms/README.md](algorithms/README.md) — that content applies uniformly across every algorithm here, so it lives in one place instead of repeated per algorithm.
 
 ## ADMM logistic regression
 
@@ -331,42 +233,18 @@ without doing any of their own preprocessing.
 
 ## Argos CNN (federated CT/GTV segmentation)
 
-`algorithms/argos_cnn/` is a PyTorch port of `mod_resnet` from the original `argosfeddeep` (TensorFlow) repo: a ResNet-encoder / PSP-style multi-scale-fusion decoder that segments lung tumors (GTV) on 2.5D (3-slice) CT stacks. It needs a per-slice NIfTI manifest, not the default LUNG1 CSVs.
+`algorithms/argos_cnn/` is a PyTorch port of `mod_resnet` from the original `argosfeddeep`
+(TensorFlow) repo: a ResNet-encoder / PSP-style multi-scale-fusion decoder that segments lung
+tumors (GTV) on 2.5D (3-slice) CT stacks. It needs a per-slice NIfTI manifest, not the default
+LUNG1 CSVs — see [algorithms/argos_cnn/README.md](algorithms/argos_cnn/README.md) for the full
+data contract, hyperparameters, and known limitations (trained-weights payload size, etc.).
 
-1. **Generate the node data** (synthetic phantom CT/GTV NIfTI files + manifests — see `generate_argos_data.py`'s docstring for exactly what's realistic vs. fake about it):
+1. Generate the node data: `uv run python data/generate_argos_data.py`
+2. Start the network with that data: `cd infrastructure && ENVIRONMENT=DEV ./infra.sh --nodes argos up`
+3. Build the algorithm image: `docker build -t argos_cnn:latest algorithms/argos_cnn/`
+4. Run it: `uv run python algorithms/argos_cnn/run_study.py`
 
-   ```bash
-   uv run python data/generate_argos_data.py
-   ```
-
-   Writes `data/argos/{alpha,beta,gamma,theta}.csv` and `data/argos/nifti/<org>/...`.
-
-2. **Start the network with that data** — uses `infrastructure/nodes.argos.env`, which also mounts each org's `data/argos/nifti/<org>` folder read-only at `/mnt/nifti` (see the folder-database note above):
-
-   ```bash
-   cd infrastructure
-   ENVIRONMENT=DEV ./infra.sh --nodes argos up
-   ```
-
-3. **Build the algorithm image** (from repo root — copies both `argos_cnn.py` and `model.py`):
-
-   ```bash
-   docker build -t argos_cnn:latest algorithms/argos_cnn/
-   ```
-
-4. **Run it on the network**:
-
-   ```bash
-   uv run python algorithms/argos_cnn/run_study.py
-   ```
-
-   Submits federated training (FedAvg, weighted by each node's dataset size), waits for all rounds, and writes the trained weights to `argos_cnn_trained_weights.pt`.
-
-Notes:
-- Unlike the other algorithms, hyperparameters (`N_ROUNDS`/`LOCAL_STEPS`/`BATCH_SIZE`/`LEARNING_RATE`/`PATCH_SIZE`/`NUM_CLASSES`/`NUM_CHANNELS`/`MIN_BOUND`/`MAX_BOUND`/`RANDOM_SEED`, plus the manifest column names) live only in `argos_cnn.py` — `run_study.py` intentionally passes none, so there's a single source of truth. Edit them there and rebuild the image. `PATCH_SIZE` must match the manifest's actual slice resolution (and stay divisible by 32, a constraint of the encoder/decoder's downsampling depth) — a mismatch now raises a clear `ValueError` instead of a cryptic numpy broadcast error.
-- This algorithm assumes CT data: axial slices, already consistently oriented and resampled to the same voxel spacing across every patient/node, with `gt_path` label values in `[0, NUM_CLASSES)`. It does no orientation/spacing validation (the code never reads a NIfTI's affine) and no modality-specific normalization beyond CT's HU windowing — see `argos_cnn.py`'s module docstring for the full data contract. Within that contract, `NUM_CLASSES` (segmentation target, e.g. binary tumor vs. multi-organ), `NUM_CHANNELS` (2.5D neighbor-slice context width), `MIN_BOUND`/`MAX_BOUND` (HU windowing preset), `RANDOM_SEED` (both the initial model weights and each round's batch sampling), and the manifest column names (`patient_col`/`slice_col`/`ct_col`/`gt_col`/`label_col`) are all real overrides, not fixed to this repo's lung-tumor demo. A manifest missing any required column now raises a clear `ValueError` instead of silently contributing nothing, while a node with a correctly-shaped but genuinely empty dataset still contributes 0 without raising.
-- Trained weights ride inside the normal vantage6 task payload as a gzip+base64 string (tens of MB for this model) rather than a separate file-transfer channel — this won't scale indefinitely to much larger models; see `argos_cnn.py`'s module docstring and vantage6's blob-storage mechanism (`vantage6/common/client/blob_storage.py`) as the eventual fix.
-- `data/argos/` is synthetic phantom data for exercising the pipeline end to end (I/O, normalization, FedAvg), not real anatomy — don't draw conclusions about model quality from it.
+See [algorithms/argos_cnn/README.md](algorithms/argos_cnn/README.md) for what each step actually does.
 
 ## Federated datavalgen validate
 

@@ -1,3 +1,15 @@
+"""Federated descriptive statistics (counts, minmax, mean, std, quantiles, nrows, nans)
+over arbitrary columns, with threshold + secondary suppression for privacy.
+
+Data contract: `statistics` is a dict of {column_name: [stat, ...]}, for any
+column present under that name on every node -- no fixed schema. `counts`/
+`binned_counts` work on any column; `minmax`/`mean`/`std`/`quantiles` require
+the column to be numeric (or numeric-coercible) -- see _numeric_series, which
+raises a clear TypeError if it isn't. A column named in `statistics` or
+`filters` that doesn't exist on a node raises a clear ValueError (via
+_require_columns) rather than being silently skipped.
+"""
+
 from hashlib import blake2b
 from typing import Any
 
@@ -125,11 +137,15 @@ def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
     return converted
 
 
-def _validate_column(df: pd.DataFrame, column: str) -> bool:
-    if column not in df.columns:
-        warn(f"Column '{column}' not found in dataset")
-        return False
-    return True
+def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"{method_name}: column(s) {missing} not found in dataset; "
+            f"available columns: {list(df.columns)}"
+        )
+        error(msg)
+        raise ValueError(msg)
 
 
 def compute_local_quantile_sampling_variance(values: np.ndarray, q: float, iterations: int) -> float:
@@ -284,10 +300,10 @@ def _compute_stats_for_frame(working: pd.DataFrame, statistics: dict, options: d
         "nans": lambda column, spec: compute_local_nans(working, column, options),
     }
 
+    _require_columns(working, list(statistics.keys()), "compute_local_stats_frame")
+
     local_stats = {}
     for column, spec in statistics.items():
-        if not _validate_column(working, column):
-            continue
         local_stats[column] = {}
         for statistic in spec["stats"]:
             local_stats[column][statistic] = methods[statistic](column, spec)
@@ -522,6 +538,15 @@ def central(
         description="Compute local descriptive statistics",
     )
     local_results = client.wait_for_results(task["id"])
+    # If every node's sub-task crashed (e.g. a misconfigured column -- see
+    # compute_local_stats_frame's _require_columns check), wait_for_results
+    # returns an empty list. Without this check, aggregate_local_results([])
+    # would silently report every requested statistic as None/suppressed,
+    # including ones unrelated to the actual failure, instead of surfacing
+    # the real error. Matches the same guard in logistic_regression.py and
+    # admm_logistic_regression.py.
+    if not local_results:
+        return {"error": "No usable data across any organization"}
 
     columns, warnings = aggregate_local_results(local_results, stats_spec)
     for warning in warnings:

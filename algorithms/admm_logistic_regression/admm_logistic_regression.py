@@ -32,7 +32,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, roc_curve
 from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.decorators import algorithm_client, data
-from vantage6.algorithm.tools.util import info, warn
+from vantage6.algorithm.tools.util import error, info, warn
 
 np.random.seed(67)
 
@@ -47,7 +47,7 @@ def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
             f"{method_name}: column(s) {missing} not found in dataset; "
             f"available columns: {list(df.columns)}"
         )
-        warn(msg)
+        error(msg)
         raise ValueError(msg)
 
 

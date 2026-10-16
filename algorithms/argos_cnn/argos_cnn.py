@@ -82,7 +82,7 @@ import torch
 import torch.nn.functional as F
 import nibabel as nib
 
-from vantage6.algorithm.tools.util import info, warn
+from vantage6.algorithm.tools.util import error, info
 from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
@@ -175,7 +175,7 @@ def _require_columns(df: pd.DataFrame, columns: set, method_name: str) -> None:
             f"{method_name}: column(s) {sorted(missing)} not found in dataset; "
             f"available columns: {list(df.columns)}"
         )
-        warn(msg)
+        error(msg)
         raise ValueError(msg)
 
 

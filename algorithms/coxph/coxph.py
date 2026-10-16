@@ -1,3 +1,15 @@
+"""Federated Cox proportional hazards regression via Newton-Raphson iterations.
+
+Data contract: `time_col` (default TIME_COL) must be a non-negative numeric
+time-to-event/censoring duration; `outcome_col` (default OUTCOME_COL) must be
+a binary 0/1 event indicator (1 = event observed, 0 = censored); `expl_vars`
+(default EXPL_VARS) must be numeric covariates. All must be present under
+the same names on every node -- a missing column raises a clear ValueError.
+Nodes with <= `minimum_events` (default 10, a per-node privacy threshold,
+see get_unique_event_times) observed events are excluded from the analysis
+entirely rather than contributing noisy statistics.
+"""
+
 import math
 
 import numpy as np

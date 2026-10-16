@@ -1,3 +1,16 @@
+"""Federated logistic regression via FedAvg (federated averaging of locally-trained weights).
+
+Data contract: `feature_cols` (default FEATURE_COLS) must be numeric columns;
+`target_col` (default TARGET_COL) must be an already-binary (0/1) column.
+Both must be present under the same names on every node. This algorithm does
+no categorical encoding or outcome derivation -- that's the caller's
+responsibility (see data/ for how LUNG1/BEACH provide already-clean columns).
+A missing column raises a clear ValueError. See admm_logistic_regression.py's
+README for a full comparison against this algorithm's ADMM-consensus sibling,
+which converges to a centralized/pooled fit where this FedAvg approach only
+approximates it.
+"""
+
 import time
 import numpy as np
 import torch

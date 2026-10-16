@@ -1,3 +1,14 @@
+"""Federated Kaplan-Meier survival curve with 95% CI (Greenwood's formula).
+
+Data contract: `time_col` (default TIME_COL) must be a non-negative numeric
+time-to-event/censoring duration; `event_col` (default EVENT_COL) must be a
+binary 0/1 event indicator (1 = event observed, 0 = censored). Both must be
+present under the same names on every node -- a missing column raises a
+clear ValueError. Optional Gaussian/Poisson noise injection on event times
+(`noise_type`/`snr`/`random_seed`) is a privacy mechanism, not a data
+requirement -- see add_noise_to_event_times.
+"""
+
 import numpy as np
 import pandas as pd
 from vantage6.algorithm.tools.util import info, error

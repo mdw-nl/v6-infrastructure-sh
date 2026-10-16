@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 from fed_statistics import compute_local_stats_frame
@@ -55,6 +56,27 @@ def test_mean_std_minmax_nrows_match_pooled_computation() -> None:
     assert np.isclose(columns["age"]["mean"], pooled["age"].mean())
     assert np.isclose(columns["age"]["std"], pooled["age"].std(ddof=1))
     assert columns["age"]["minmax"] == {"min": float(pooled["age"].min()), "max": float(pooled["age"].max())}
+
+
+def test_raises_clear_error_for_missing_column() -> None:
+    # Regression test: a requested column that doesn't exist on a node used
+    # to be silently skipped (warn + omit from the output) instead of
+    # failing loudly, unlike every other algorithm in this repo. A
+    # misconfigured column name must now raise, naming the missing column.
+    datasets = _build_datasets()
+    client = MockAlgorithmClient(
+        datasets=[[{"database": df, "input_data": {}}] for df in datasets],
+        module="fed_statistics",
+    )
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match="missing_column"):
+        client.task.create(
+            input_={
+                "method": "central",
+                "kwargs": {"statistics": {"missing_column": ["mean"]}, "filters": None, "options": None},
+            },
+            organizations=org_ids,
+        )
 
 
 def test_counts_match_pooled_value_counts() -> None:

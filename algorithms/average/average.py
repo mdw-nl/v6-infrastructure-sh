@@ -1,3 +1,12 @@
+"""Federated average of a single column.
+
+Data contract: `column` (central()/partial() kwarg, default AVERAGE_VAR) must
+be a numeric column, present under the same name on every node. No encoding
+or cleaning is done here -- a missing column raises a clear ValueError; a
+present-but-non-numeric column will fail less clearly, inside the sum/count
+computation itself.
+"""
+
 import pandas as pd
 from vantage6.algorithm.tools.util import info, error
 from vantage6.algorithm.tools.decorators import algorithm_client, data
