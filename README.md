@@ -134,14 +134,14 @@ Then use `localhost:5000/v6-sklearn-linear-py:dev` in task creation.
 
 ## Data
 
-The `data/` directory holds the default LUNG1 CSVs plus everything that generates or checks per-node data for the non-default node profiles:
+The `data/` directory holds the default LUNG1 CSVs plus everything that generates or checks per-node data for the non-default node profiles. Full details (including a disambiguation of three unrelated "datavalgen" things that live here) are in [data/README.md](data/README.md) — summary:
 
 | Path | What it is |
 |---|---|
-| `data/lung1/` | Default LUNG1 CSVs, used by `nodes.lung1.env` (the default profile) |
+| `data/lung1/` | Default LUNG1 CSVs, used by `nodes.lung1.env` (the default profile). Static, hand-crafted synthetic data (not a real patient dataset) — see [data/lung1/README.md](data/lung1/README.md) for exact columns, row counts, and per-algorithm default usage |
 | `data/generate_beach_data.py` | Generates BEACH-schema CSVs (an alternative dataset for `logistic_regression`/`admm_logistic_regression`), used with `nodes.beach.env` |
-| `data/generate_argos_data.py` | Generates synthetic CT/GTV NIfTI + manifest data for `argos_cnn`, used with `nodes.argos.env` |
-| `data/datavalgen/` | Pydantic schema ("example" model) + CLI for generating/validating fictional patient CSVs by hand, plus a vantage6 algorithm (`v6-validate/`) that runs that same validation federated across nodes. All setup, Docker, and run instructions live in [data/datavalgen/README.md](data/datavalgen/README.md) — see "Federated datavalgen validate" below for how it fits into this harness |
+| `data/generate_argos_data.py` | Generates synthetic CT/GTV NIfTI + manifest data for `argos_cnn`, used with `nodes.argos.env` — no datavalgen involvement, since this data is NIfTI images, not a flat schema-able CSV |
+| `data/datavalgen/` | **Unrelated to the three datasets above.** A self-contained demo sub-project (its own `pyproject.toml`/`.venv`) with its own Pydantic schema ("example" model) + CLI for generating/validating fictional patient CSVs by hand, plus a vantage6 algorithm (`v6-validate/`) that runs that same validation federated across nodes. All setup, Docker, and run instructions live in [data/datavalgen/README.md](data/datavalgen/README.md) — see "Federated datavalgen validate" below for how it fits into this harness |
 
 Each data source's matching node profile (`infrastructure/nodes.<profile>.env`) and the algorithm that consumes it are documented together in the algorithm-specific sections below.
 
