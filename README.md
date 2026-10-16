@@ -185,51 +185,13 @@ Available algorithms:
 | `coxph/` | Federated Cox proportional hazards regression (hazard ratios across covariates) via federated Newton-Raphson iterations |
 | `fed_statistics/` | Federated descriptive statistics (counts, binned counts, min/max, mean, std, bootstrap quantiles, nrows, nans) with threshold + secondary suppression for privacy |
 | `argos_cnn/` | Federated ModResNet (PyTorch) for CT/GTV tumor segmentation — see **Argos CNN** below |
-| `admm_logistic_regression/` | Federated logistic regression via ADMM consensus — reproduces a centralized/pooled fit's coefficients, on the same default LUNG1 data as `logistic_regression/` — see **ADMM logistic regression** below |
+| `admm_logistic_regression/` | Federated logistic regression via ADMM consensus — reproduces a centralized/pooled fit's coefficients, on the same default LUNG1 data as `logistic_regression/` — see `algorithms/admm_logistic_regression/README.md` |
 
 Each algorithm file has a block of **user-configurable variables** near the top (feature columns, target column, learning rate, number of rounds, train/test ratio, etc.). These act only as fallback defaults — see [algorithms/README.md](algorithms/README.md)'s **Changing variables without rebuilding the image** for how to override the important ones (the data columns) per run from `run_study.py`.
 
-Note there are two logistic regression implementations in this repo, both taking the same `feature_cols`/`target_col` arguments and assuming already-numeric features plus an already-binary target (no categorical encoding or outcome derivation — that's a data-preparation concern, not this algorithm's): `logistic_regression/` trains a PyTorch model with federated averaging of weights across rounds (an approximation whose accuracy depends on rounds/epochs/batch size), while `admm_logistic_regression/` (see below) uses ADMM consensus optimization, which converges to the same coefficients as a centralized/pooled fit — see `algorithms/admm_logistic_regression/README.md` for a full side-by-side comparison of the two.
+Note there are two logistic regression implementations in this repo, both taking the same `feature_cols`/`target_col` arguments and assuming already-numeric features plus an already-binary target (no categorical encoding or outcome derivation — that's a data-preparation concern, not this algorithm's): `logistic_regression/` trains a PyTorch model with federated averaging of weights across rounds (an approximation whose accuracy depends on rounds/epochs/batch size), while `admm_logistic_regression/` uses ADMM consensus optimization, which converges to the same coefficients as a centralized/pooled fit. Neither needs any special node setup — both run against the default LUNG1 data out of the box — see `algorithms/admm_logistic_regression/README.md` for a full side-by-side comparison of the two, including how to point either one at the alternative BEACH dataset instead.
 
 Building images, running studies, using the published GHCR images instead of building, overriding variables without rebuilding, the full per-algorithm data-contracts table, and adding your own algorithm are all documented in [algorithms/README.md](algorithms/README.md) — that content applies uniformly across every algorithm here, so it lives in one place instead of repeated per algorithm.
-
-## ADMM logistic regression
-
-`algorithms/admm_logistic_regression/` runs a federated logistic regression that uses ADMM
-consensus optimization instead of `logistic_regression/`'s federated-averaging approach — see
-`algorithms/admm_logistic_regression/README.md` for exactly how the two differ (optimization
-strategy, regularization, evaluation metrics) and why ADMM, unlike FedAvg, converges to the same
-coefficients as a centralized/pooled fit on the combined data.
-
-The ADMM approach is adapted from `mdw-nl/20kChallengeVantage6` (itself based on the Deist et al.
-"Personal Health Train" manuscript) and restructured to match this repo's single-module algorithm
-layout **and** generalized to a plain federated-learning algorithm — like `logistic_regression/`,
-it takes `feature_cols`/`target_col` as arguments and expects already-numeric features plus an
-already-binary target column (identical across nodes); it does no categorical encoding or outcome
-derivation itself (see that algorithm's README for the full data contract and provenance). It
-therefore needs no special node setup: it runs against the same default LUNG1 data as
-`logistic_regression/` out of the box.
-
-1. **Build the algorithm image** (from repo root):
-
-   ```bash
-   docker build -t admm_logistic_regression:latest algorithms/admm_logistic_regression/
-   ```
-
-2. **Run it on the network** (from repo root, with the default `lung1` node profile up):
-
-   ```bash
-   uv run python algorithms/admm_logistic_regression/run_study.py
-   ```
-
-   Submits the ADMM task, waits for all nodes, and prints coefficients, AUC, and calibration.
-
-To run it against a different dataset, override `FEATURE_COLS`/`TARGET_COL` in that script. For
-example, `data/generate_beach_data.py` (BEACH-schema synthetic data, started with
-`./infra.sh --nodes beach up`) precomputes exactly this kind of ready-to-use columns —
-`t_stage_code`/`n_stage_code`/`m_stage_code`/`overall_stage_code` as features and
-`two_year_survival` as the target — specifically so algorithms like this one can run against it
-without doing any of their own preprocessing.
 
 ## Argos CNN (federated CT/GTV segmentation)
 

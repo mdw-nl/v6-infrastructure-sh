@@ -6,8 +6,9 @@ usual algorithm layout (see `logistic_regression/`, `coxph/`, `fed_statistics/`,
 `setup.py`.
 
 This algorithm is designed to be run with the [vantage6](https://vantage6.ai) infrastructure for
-distributed analysis and learning. See the "ADMM logistic regression" section in the repo root
-[README.md](../../README.md) for how to build the image and run it against this harness.
+distributed analysis and learning. It needs no special node setup — see
+[../README.md](../README.md) (building images, running studies, using the published GHCR image)
+for how to build and run it against this harness, same as any other algorithm here.
 
 ## ⚠️ This algorithm only does federated learning, not data preparation
 
