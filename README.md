@@ -138,6 +138,11 @@ state, and run `infra.sh up` again.
 
 ## Local image registry
 
+This is for a throwaway local registry, useful when debugging a node that can't see a
+locally-built image (e.g. Docker context isolation). If you just want to skip building
+an `algorithms/` image altogether, use the published GHCR image instead — see **Using a
+published image instead of building** above.
+
 If nodes report `non-existing Docker image`, use a local registry and submit
 tasks with a registry-backed image reference:
 
@@ -224,6 +229,29 @@ docker build -t fed_statistics:latest algorithms/fed_statistics/
 ```
 
 Because the nodes run inside Docker on the same host daemon, no registry push is needed for local testing. If nodes report `non-existing Docker image` anyway, see the **Local image registry** section.
+
+### Using a published image instead of building
+
+You don't have to build any algorithm image yourself. Every algorithm in `algorithms/` is built and published automatically by `.github/workflows/build-algorithm-images.yaml` on every merge to `main`, as a public image at:
+
+```text
+ghcr.io/mdw-nl/v6-infrastructure-sh/<algorithm-folder-name>:latest
+```
+
+e.g. `ghcr.io/mdw-nl/v6-infrastructure-sh/average:latest`, `ghcr.io/mdw-nl/v6-infrastructure-sh/argos_cnn:latest`. These are public — no `docker login` or credentials needed to pull them.
+
+To use one instead of building locally, just point that algorithm's `run_study.py` at the full registry reference instead of the bare local tag:
+
+```python
+# instead of:
+ALGORITHM_IMAGE = "average:latest"
+# use:
+ALGORITHM_IMAGE = "ghcr.io/mdw-nl/v6-infrastructure-sh/average:latest"
+```
+
+No code or Dockerfile changes needed — `run_study.py` just passes this string straight through as the task's `image`, and the vantage6 **node** (not your shell) pulls it from GHCR itself the first time a task references it, the same way it already pulls the vantage6 server/node/UI images. Skip the `docker build` step for that algorithm entirely. Each of the 7 current algorithms (`average`/`logistic_regression`/`admm_logistic_regression`/`coxph`/`fed_statistics`/`kaplan_meier`/`argos_cnn`) has been verified to run correctly this way.
+
+Also tag with a specific commit SHA (visible in the package's version list on GitHub, or as the second tag the workflow pushes alongside `:latest`) instead of `:latest` if you want to pin to an exact, reproducible build rather than whatever the most recent merge to `main` currently points at.
 
 ### Running a study
 

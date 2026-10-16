@@ -7,14 +7,16 @@ name: Build and Publish Algorithm Images
 # Everything else (PRs, workflow_dispatch on a non-main branch) is a
 # build-only smoke check - no push, no registry login attempted.
 #
-# NOTE: GHCR defaults a brand-new package to private on its first push,
-# regardless of this repo's own visibility. After the first successful
-# push of a given algorithm, go to the package's settings on GitHub
-# (Organization/repo -> Packages -> <algorithm name> -> Package settings
-# -> Change visibility -> Public) once. This is a one-time step per
-# algorithm, not something this workflow can reliably do with the
-# ambient GITHUB_TOKEN (changing package visibility needs broader
-# permissions than the token's packages:write scope grants).
+# NOTE on visibility: GHCR often defaults a brand-new package to private
+# on its first push regardless of the source repo's own visibility, which
+# would need a one-time manual fix per package (Organization -> Packages
+# -> <algorithm name> -> Package settings -> Change visibility -> Public).
+# Verified after this workflow's first run against the mdw-nl org that it
+# was NOT needed here - all 7 images came up publicly pullable with no
+# extra step (an anonymous `docker pull`/registry token check against each
+# one succeeded). Leaving this note in case that ever changes (e.g. an org
+# policy change, or a new algorithm added under different circumstances) -
+# if a future image comes up private, this is the fix.
 
 on:
   pull_request:
