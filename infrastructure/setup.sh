@@ -29,6 +29,7 @@ load_node_specs
 validate_node_specs
 print_node_specs
 
+cleanup_local_state
 setup_venv
 install_dependencies
 pull_docker_images
