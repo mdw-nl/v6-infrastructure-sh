@@ -15,12 +15,18 @@ coefficients as a centralized/pooled fit on the combined data, which plain
 weight-averaging does not guarantee.
 
 This algorithm only does federated learning: it assumes ``feature_cols`` are
-already numeric and ``target_col`` is already a binary (0/1) column, present
-under the exact same names on every node's data. It does not encode
-categories, derive outcomes, or otherwise clean data -- that's a
-data-preparation concern for the caller (e.g. ``data/datavalgen``), not this
-algorithm's. Passing columns that aren't already clean numeric/binary will
-produce wrong results silently rather than a validation error.
+already numeric, present under the exact same names on every node's data.
+``target_col`` must resolve to a binary (0/1) column -- either because it
+already is one, or because ``target_representation`` says how to derive 0/1
+from it, e.g. ``{"mode": "presence"}`` when the target column's value being
+present/missing (not its content) indicates the event, or ``{"mode":
+"equals", "positive_value": ...}`` / ``{"mode": "isin", "positive_values":
+[...]}`` when a specific value (or set of values) means the event occurred.
+See ``_derive_binary`` for the full set of modes. It does not encode
+categories or otherwise clean data -- that's a data-preparation concern for
+the caller (e.g. ``data/datavalgen``), not this algorithm's. A column that
+still isn't binary after representation raises a clear ValueError rather
+than silently producing wrong results.
 """
 
 from typing import Any
@@ -51,9 +57,70 @@ def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
         raise ValueError(msg)
 
 
+def _derive_binary(series: pd.Series, representation: dict | None, column_name: str) -> pd.Series:
+    """Resolve a raw column to 0/1 (NaN preserved for later dropna), either as-is or
+    via a representation spec: {"mode": "presence"} (1 if not null, 0 if null),
+    {"mode": "equals", "positive_value": ...} (1 if value matches, else 0), or
+    {"mode": "isin", "positive_values": [...]} (1 if value is one of these, else 0).
+    Any mode accepts "invert": true to flip the result. Raises ValueError if the
+    resulting column (after representation, or as-is when none is given) isn't
+    numeric and binary."""
+    if not representation:
+        result = series
+    else:
+        mode = representation.get("mode")
+        if mode == "presence":
+            result = series.notna().astype(float)
+        elif mode == "equals":
+            positive_value = representation["positive_value"]
+            result = series.where(series.isna(), (series == positive_value).astype(float))
+        elif mode == "isin":
+            positive_values = representation["positive_values"]
+            result = series.where(series.isna(), series.isin(positive_values).astype(float))
+        else:
+            msg = (
+                f"column {column_name!r}: unknown representation mode {mode!r}; "
+                f"expected one of 'presence', 'equals', 'isin'"
+            )
+            error(msg)
+            raise ValueError(msg)
+        if representation.get("invert"):
+            result = result.where(result.isna(), 1.0 - result)
+
+    try:
+        numeric = pd.to_numeric(result, errors="raise")
+    except (ValueError, TypeError) as exc:
+        msg = (
+            f"column {column_name!r} is not numeric ({exc}); if it isn't already binary "
+            f"(0/1), derive it with a representation dict, e.g. {{'mode': 'presence'}} if "
+            f"the value's presence/absence indicates the event"
+        )
+        error(msg)
+        raise ValueError(msg) from exc
+
+    non_null = numeric.dropna()
+    bad_values = sorted(non_null.loc[~non_null.isin([0.0, 1.0])].unique().tolist())
+    if bad_values:
+        msg = (
+            f"column {column_name!r} contains non-binary value(s) {bad_values[:5]} "
+            f"(representation={representation!r}); derive it to 0/1 first via a "
+            f"representation dict, e.g. {{'mode': 'equals', 'positive_value': ...}} or "
+            f"{{'mode': 'isin', 'positive_values': [...]}}"
+        )
+        error(msg)
+        raise ValueError(msg)
+    return numeric
+
+
 def _split_train_val(
-    df: pd.DataFrame, feature_cols: list, target_col: str, train_ratio: float, seed: int
+    df: pd.DataFrame,
+    feature_cols: list,
+    target_col: str,
+    train_ratio: float,
+    seed: int,
+    target_representation: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
     df_clean = df.dropna(subset=[*feature_cols, target_col])
     train_df = df_clean.sample(frac=train_ratio, random_state=seed)
     val_df = df_clean.drop(train_df.index)
@@ -237,6 +304,7 @@ def central(
     client: AlgorithmClient,
     feature_cols: list,
     target_col: str,
+    target_representation: dict | None = None,
     num_rounds: int = 100,
     rho: float = 3,
     alpha: float = 1.4,
@@ -269,7 +337,7 @@ def central(
     info("=" * 60)
     info(f"Organizations : {num_sites}")
     info(f"Features      : {feature_cols}")
-    info(f"Target        : {target_col}")
+    info(f"Target        : {target_col}  (representation={target_representation})")
     info(f"Rounds        : {num_rounds}  |  rho={rho}  alpha={alpha}  lambda_={lambda_}")
 
     # ── Phase 1: federated normalization statistics ──────────────────────────
@@ -279,6 +347,7 @@ def central(
             "kwargs": {
                 "feature_cols": feature_cols,
                 "target_col": target_col,
+                "target_representation": target_representation,
                 "train_ratio": train_ratio,
                 "seed": seed,
             },
@@ -323,6 +392,7 @@ def central(
                     "kwargs": {
                         "feature_cols": feature_cols,
                         "target_col": target_col,
+                        "target_representation": target_representation,
                         "z": z.tolist(),
                         "u": u_mat[:, site_idx].tolist(),
                         "x_prev": x_mat[:, site_idx].tolist(),
@@ -396,6 +466,7 @@ def central(
                     "kwargs": {
                         "feature_cols": feature_cols,
                         "target_col": target_col,
+                        "target_representation": target_representation,
                         "z": z.tolist(),
                         "global_mean": global_mean.tolist(),
                         "global_std": global_std.tolist(),
@@ -455,6 +526,7 @@ def central(
                 "kwargs": {
                     "feature_cols": feature_cols,
                     "target_col": target_col,
+                    "target_representation": target_representation,
                     "z": z.tolist(),
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
@@ -529,13 +601,14 @@ def compute_stats(
     df1: pd.DataFrame,
     feature_cols: list,
     target_col: str,
+    target_representation: dict | None = None,
     train_ratio: float = 0.8,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Local training-row count plus feature sums/sum-of-squares, used by
     central() to compute the global mean/std for normalization."""
     _require_columns(df1, [*feature_cols, target_col], "compute_stats")
-    train_df, _ = _split_train_val(df1, feature_cols, target_col, train_ratio, seed)
+    train_df, _ = _split_train_val(df1, feature_cols, target_col, train_ratio, seed, target_representation)
     n = len(train_df)
     info(f"Dataset: {len(df1)} total rows, {n} usable training rows after cleaning")
     if n == 0:
@@ -557,6 +630,7 @@ def admm_x_update_partial(
     total_patients: int,
     global_mean: list,
     global_std: list,
+    target_representation: dict | None = None,
     train_ratio: float = 0.8,
     seed: int = 42,
     x_prev: Any | None = None,
@@ -565,7 +639,7 @@ def admm_x_update_partial(
     consensus penalty tying this site's (normalized-feature) coefficients to
     the global z."""
     _require_columns(df1, [*feature_cols, target_col], "admm_x_update_partial")
-    train_df, _ = _split_train_val(df1, feature_cols, target_col, train_ratio, seed)
+    train_df, _ = _split_train_val(df1, feature_cols, target_col, train_ratio, seed, target_representation)
 
     mean = np.asarray(global_mean, dtype=float)
     std = np.asarray(global_std, dtype=float)
@@ -608,12 +682,13 @@ def evaluate_global_model(
     z: Any,
     global_mean: list,
     global_std: list,
+    target_representation: dict | None = None,
     train_ratio: float = 0.8,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Evaluate the current global consensus vector z on this node's validation data."""
     _require_columns(df1, [*feature_cols, target_col], "evaluate_global_model")
-    _, val_df = _split_train_val(df1, feature_cols, target_col, train_ratio, seed)
+    _, val_df = _split_train_val(df1, feature_cols, target_col, train_ratio, seed, target_representation)
 
     mean = np.asarray(global_mean, dtype=float)
     std = np.asarray(global_std, dtype=float)
@@ -641,13 +716,14 @@ def collect_predictions(
     z: Any,
     global_mean: list,
     global_std: list,
+    target_representation: dict | None = None,
     train_ratio: float = 0.8,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Return outcomes and predicted probabilities on the validation set only,
     used by central() after convergence to compute ROC/AUC and calibration."""
     _require_columns(df1, [*feature_cols, target_col], "collect_predictions")
-    _, val_df = _split_train_val(df1, feature_cols, target_col, train_ratio, seed)
+    _, val_df = _split_train_val(df1, feature_cols, target_col, train_ratio, seed, target_representation)
 
     mean = np.asarray(global_mean, dtype=float)
     std = np.asarray(global_std, dtype=float)

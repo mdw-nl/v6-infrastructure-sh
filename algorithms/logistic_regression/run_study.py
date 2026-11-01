@@ -13,6 +13,15 @@ COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
 FEATURE_COLS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 TARGET_COL = "deadstatus.event"
+# TARGET_COL is already 0/1 by default, so TARGET_REPRESENTATION can stay None.
+# If your data represents the outcome differently, set TARGET_REPRESENTATION
+# instead of pre-processing the column, e.g.:
+#   TARGET_COL = "death_date"
+#   TARGET_REPRESENTATION = {"mode": "presence"}            # 1 if a death date is recorded, else 0
+#   TARGET_REPRESENTATION = {"mode": "equals", "positive_value": "Deceased"}
+#   TARGET_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
+# Add "invert": true to any of the above to flip which side counts as 1.
+TARGET_REPRESENTATION = None
 N_ROUNDS = 20
 LOCAL_EPOCHS = 5
 LEARNING_RATE = 0.1
@@ -53,7 +62,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Features      : {FEATURE_COLS}")
-    print(f"Target        : {TARGET_COL}")
+    print(f"Target        : {TARGET_COL}  (representation={TARGET_REPRESENTATION})")
     print(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
     print(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
     print(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
@@ -70,6 +79,7 @@ def main() -> None:
             "kwargs": {
                 "feature_cols": FEATURE_COLS,
                 "target_col": TARGET_COL,
+                "target_representation": TARGET_REPRESENTATION,
                 "n_rounds": N_ROUNDS,
                 "local_epochs": LOCAL_EPOCHS,
                 "learning_rate": LEARNING_RATE,

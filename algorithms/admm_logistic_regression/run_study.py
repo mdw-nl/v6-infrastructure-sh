@@ -20,6 +20,15 @@ INITIATING_ORG = "alpha"
 # logistic regression" section for an example).
 FEATURE_COLS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 TARGET_COL = "deadstatus.event"
+# TARGET_COL is already 0/1 by default, so TARGET_REPRESENTATION can stay None.
+# If your data represents the outcome differently, set TARGET_REPRESENTATION
+# instead of pre-processing the column, e.g.:
+#   TARGET_COL = "death_date"
+#   TARGET_REPRESENTATION = {"mode": "presence"}            # 1 if a death date is recorded, else 0
+#   TARGET_REPRESENTATION = {"mode": "equals", "positive_value": "Deceased"}
+#   TARGET_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
+# Add "invert": true to any of the above to flip which side counts as 1.
+TARGET_REPRESENTATION = None
 TRAIN_RATIO = 0.8
 RANDOM_SEED = 42
 
@@ -63,7 +72,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Features      : {FEATURE_COLS}")
-    print(f"Target        : {TARGET_COL}")
+    print(f"Target        : {TARGET_COL}  (representation={TARGET_REPRESENTATION})")
     print(f"num_rounds={NUM_ROUNDS}  rho={RHO}  alpha={ALPHA}  lambda_={LAMBDA_}")
     print(f"abs_tol={ABS_TOL}  rel_tol={REL_TOL}  train_ratio={TRAIN_RATIO}  seed={RANDOM_SEED}")
     print()
@@ -79,6 +88,7 @@ def main() -> None:
             "kwargs": {
                 "feature_cols": FEATURE_COLS,
                 "target_col": TARGET_COL,
+                "target_representation": TARGET_REPRESENTATION,
                 "num_rounds": NUM_ROUNDS,
                 "rho": RHO,
                 "alpha": ALPHA,

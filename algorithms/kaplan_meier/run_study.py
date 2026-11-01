@@ -16,6 +16,15 @@ INITIATING_ORG = "alpha"
 
 TIME_COL = "Survival.time"
 EVENT_COL = "deadstatus.event"
+# EVENT_COL is already 0/1 by default, so EVENT_REPRESENTATION can stay None.
+# If your data represents the event differently, set EVENT_REPRESENTATION
+# instead of pre-processing the column, e.g.:
+#   EVENT_COL = "death_date"
+#   EVENT_REPRESENTATION = {"mode": "presence"}            # 1 if a death date is recorded, else 0
+#   EVENT_REPRESENTATION = {"mode": "equals", "positive_value": "Deceased"}
+#   EVENT_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
+# Add "invert": true to any of the above to flip which side counts as the event.
+EVENT_REPRESENTATION = None
 STEP_DAYS = 30
 
 # Optional privacy noise injection on event times before aggregation.
@@ -114,7 +123,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Time column   : {TIME_COL}")
-    print(f"Event column  : {EVENT_COL}")
+    print(f"Event column  : {EVENT_COL}  (representation={EVENT_REPRESENTATION})")
     print(f"Step days     : {STEP_DAYS}")
     print(f"Noise type    : {NOISE_TYPE}")
     if NOISE_TYPE != "none":
@@ -133,6 +142,7 @@ def main() -> None:
             "kwargs": {
                 "time_col": TIME_COL,
                 "event_col": EVENT_COL,
+                "event_representation": EVENT_REPRESENTATION,
                 "step_days": STEP_DAYS,
                 "noise_type": NOISE_TYPE,
                 "snr": SNR,

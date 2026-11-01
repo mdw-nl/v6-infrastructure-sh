@@ -5,6 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 from admm_logistic_regression import (
+    _derive_binary,
     _logistic_admm_objective,
     _predict_proba,
     _split_train_val,
@@ -435,3 +436,51 @@ def test_admm_does_not_crash_when_no_node_has_validation_patients() -> None:
     assert all(np.isnan(v) for v in result["history"]["val_rmse"])
     assert result["roc_site"] == []
     assert result["roc_global"] == {}
+
+
+# ── target_representation ──────────────────────────────────────────────────────
+
+
+def test_derive_binary_presence_mode() -> None:
+    series = pd.Series(["2020-01-01", None, "2021-06-15"])
+    result = _derive_binary(series, {"mode": "presence"}, "death_date")
+    assert result.tolist() == [1.0, 0.0, 1.0]
+
+
+def test_derive_binary_equals_mode_preserves_missing() -> None:
+    series = pd.Series(["Deceased", "Alive", None])
+    result = _derive_binary(series, {"mode": "equals", "positive_value": "Deceased"}, "status")
+    assert result.tolist()[:2] == [1.0, 0.0]
+    assert pd.isna(result.iloc[2])
+
+
+def test_derive_binary_raises_when_non_binary_without_representation() -> None:
+    with pytest.raises(ValueError, match=r"not numeric"):
+        _derive_binary(pd.Series(["Deceased", "Alive"]), None, "status")
+
+
+def test_split_train_val_applies_target_representation() -> None:
+    df = pd.DataFrame(
+        {"x0": [1.0, 2.0, 3.0], "x1": [1.0, 2.0, 3.0], "death_date": ["2020-01-01", None, "2020-02-01"]}
+    )
+    train_df, _ = _split_train_val(
+        df, FEATURE_COLS, "death_date", train_ratio=1.0, seed=1, target_representation={"mode": "presence"},
+    )
+    assert sorted(train_df["death_date"].tolist()) == [0.0, 1.0, 1.0]
+
+
+def test_compute_stats_derives_target_from_presence_representation() -> None:
+    df = pd.DataFrame(
+        {"x0": [1.0, 2.0, 3.0, 4.0], "x1": [1.0, 2.0, 3.0, 4.0], "death_date": ["2020-01-01", None, "2021-01-01", None]}
+    )
+    result = _call_node_method(
+        df, "compute_stats", feature_cols=FEATURE_COLS, target_col="death_date",
+        target_representation={"mode": "presence"}, train_ratio=1.0, seed=1,
+    )
+    assert result["n"] == 4
+
+
+def test_compute_stats_raises_clear_error_for_non_binary_target_without_representation() -> None:
+    df = pd.DataFrame({"x0": [1.0, 2.0], "x1": [1.0, 2.0], "status": ["Deceased", "Alive"]})
+    with pytest.raises(ValueError, match=r"not numeric"):
+        _call_node_method(df, "compute_stats", feature_cols=FEATURE_COLS, target_col="status", train_ratio=1.0, seed=1)

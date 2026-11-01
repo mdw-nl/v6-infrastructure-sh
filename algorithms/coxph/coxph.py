@@ -1,10 +1,18 @@
 """Federated Cox proportional hazards regression via Newton-Raphson iterations.
 
 Data contract: `time_col` (default TIME_COL) must be a non-negative numeric
-time-to-event/censoring duration; `outcome_col` (default OUTCOME_COL) must be
-a binary 0/1 event indicator (1 = event observed, 0 = censored); `expl_vars`
-(default EXPL_VARS) must be numeric covariates. All must be present under
-the same names on every node -- a missing column raises a clear ValueError.
+time-to-event/censoring duration, present under the same name on every node.
+`outcome_col` (default OUTCOME_COL) must resolve to a binary 0/1 event
+indicator (1 = event observed, 0 = censored) -- either because it already is
+one, or because `outcome_representation` (default OUTCOME_REPRESENTATION,
+None) says how to derive 0/1 from it, e.g. `{"mode": "presence"}` when the
+outcome column's value being present/missing (not its content) indicates the
+event, or `{"mode": "equals", "positive_value": ...}` / `{"mode": "isin",
+"positive_values": [...]}` when a specific value (or set of values) means the
+event occurred. See _derive_binary for the full set of modes. `expl_vars`
+(default EXPL_VARS) must be numeric covariates, present under the same names
+on every node. A missing column, an unknown representation mode, or a column
+that still isn't binary after representation raises a clear ValueError.
 Nodes with <= `minimum_events` (default 10, a per-node privacy threshold,
 see get_unique_event_times) observed events are excluded from the analysis
 entirely rather than contributing noisy statistics.
@@ -22,6 +30,7 @@ from vantage6.algorithm.client import AlgorithmClient
 
 TIME_COL = "Survival.time"
 OUTCOME_COL = "deadstatus.event"
+OUTCOME_REPRESENTATION = None
 EXPL_VARS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
@@ -36,6 +45,61 @@ def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
         )
         error(msg)
         raise ValueError(msg)
+
+
+def _derive_binary(series: pd.Series, representation: dict | None, column_name: str) -> pd.Series:
+    """Resolve a raw column to 0/1 (NaN preserved for later dropna), either as-is or
+    via a representation spec: {"mode": "presence"} (1 if not null, 0 if null),
+    {"mode": "equals", "positive_value": ...} (1 if value matches, else 0), or
+    {"mode": "isin", "positive_values": [...]} (1 if value is one of these, else 0).
+    Any mode accepts "invert": true to flip the result. Raises ValueError if the
+    resulting column (after representation, or as-is when none is given) isn't
+    numeric and binary."""
+    if not representation:
+        result = series
+    else:
+        mode = representation.get("mode")
+        if mode == "presence":
+            result = series.notna().astype(float)
+        elif mode == "equals":
+            positive_value = representation["positive_value"]
+            result = series.where(series.isna(), (series == positive_value).astype(float))
+        elif mode == "isin":
+            positive_values = representation["positive_values"]
+            result = series.where(series.isna(), series.isin(positive_values).astype(float))
+        else:
+            msg = (
+                f"column {column_name!r}: unknown representation mode {mode!r}; "
+                f"expected one of 'presence', 'equals', 'isin'"
+            )
+            error(msg)
+            raise ValueError(msg)
+        if representation.get("invert"):
+            result = result.where(result.isna(), 1.0 - result)
+
+    try:
+        numeric = pd.to_numeric(result, errors="raise")
+    except (ValueError, TypeError) as exc:
+        msg = (
+            f"column {column_name!r} is not numeric ({exc}); if it isn't already binary "
+            f"(0/1), derive it with a representation dict, e.g. {{'mode': 'presence'}} if "
+            f"the value's presence/absence indicates the event"
+        )
+        error(msg)
+        raise ValueError(msg) from exc
+
+    non_null = numeric.dropna()
+    bad_values = sorted(non_null.loc[~non_null.isin([0.0, 1.0])].unique().tolist())
+    if bad_values:
+        msg = (
+            f"column {column_name!r} contains non-binary value(s) {bad_values[:5]} "
+            f"(representation={representation!r}); derive it to 0/1 first via a "
+            f"representation dict, e.g. {{'mode': 'equals', 'positive_value': ...}} or "
+            f"{{'mode': 'isin', 'positive_values': [...]}}"
+        )
+        error(msg)
+        raise ValueError(msg)
+    return numeric
 
 
 def _safe_inverse(matrix: np.ndarray) -> np.ndarray:
@@ -125,6 +189,7 @@ def central(
     client: AlgorithmClient,
     time_col: str = TIME_COL,
     outcome_col: str = OUTCOME_COL,
+    outcome_representation: dict = OUTCOME_REPRESENTATION,
     expl_vars: list = None,
     max_iterations: int = MAX_ITERATIONS,
     tolerance: float = TOLERANCE,
@@ -142,7 +207,7 @@ def central(
     info("=" * 60)
     info(f"Organizations : {[org['name'] for org in orgs]}")
     info(f"Time column   : {time_col}")
-    info(f"Outcome column: {outcome_col}")
+    info(f"Outcome column: {outcome_col}  (representation={outcome_representation})")
     info(f"Covariates    : {expl_vars}")
 
     # ── Phase 1: unique event times ────────────────────────────────────────
@@ -151,7 +216,11 @@ def central(
     times_task = client.task.create(
         input_={
             "method": "get_unique_event_times",
-            "kwargs": {"time_col": time_col, "outcome_col": outcome_col},
+            "kwargs": {
+                "time_col": time_col,
+                "outcome_col": outcome_col,
+                "outcome_representation": outcome_representation,
+            },
         },
         organizations=ids,
         name="coxph_unique_event_times",
@@ -188,7 +257,11 @@ def central(
     z_task = client.task.create(
         input_={
             "method": "compute_summed_z",
-            "kwargs": {"outcome_col": outcome_col, "expl_vars": expl_vars},
+            "kwargs": {
+                "outcome_col": outcome_col,
+                "outcome_representation": outcome_representation,
+                "expl_vars": expl_vars,
+            },
         },
         organizations=ids,
         name="coxph_summed_z",
@@ -314,9 +387,11 @@ def get_unique_event_times(
     df: pd.DataFrame,
     time_col: str = TIME_COL,
     outcome_col: str = OUTCOME_COL,
+    outcome_representation: dict = OUTCOME_REPRESENTATION,
     minimum_events: int = 10,
 ) -> dict:
     _require_columns(df, [time_col, outcome_col], "get_unique_event_times")
+    df = df.assign(**{outcome_col: _derive_binary(df[outcome_col], outcome_representation, outcome_col)})
     info("Computing unique event times")
     if int(df[outcome_col].notnull().sum()) <= int(minimum_events):
         org_id = getattr(client, "organization_id", -1)
@@ -335,10 +410,12 @@ def get_unique_event_times(
 def compute_summed_z(
     df: pd.DataFrame,
     outcome_col: str = OUTCOME_COL,
+    outcome_representation: dict = OUTCOME_REPRESENTATION,
     expl_vars: list = None,
 ) -> dict:
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
     _require_columns(df, [outcome_col, *expl_vars], "compute_summed_z")
+    df = df.assign(**{outcome_col: _derive_binary(df[outcome_col], outcome_representation, outcome_col)})
     info("Computing summed z statistics")
     z_sum = df[df[outcome_col] == 1][expl_vars].sum().astype(float).to_dict()
     return {"sum": z_sum}

@@ -14,6 +14,15 @@ INITIATING_ORG = "alpha"
 
 TIME_COL = "Survival.time"
 OUTCOME_COL = "deadstatus.event"
+# OUTCOME_COL is already 0/1 by default, so OUTCOME_REPRESENTATION can stay
+# None. If your data represents the event differently, set
+# OUTCOME_REPRESENTATION instead of pre-processing the column, e.g.:
+#   OUTCOME_COL = "death_date"
+#   OUTCOME_REPRESENTATION = {"mode": "presence"}            # 1 if a death date is recorded, else 0
+#   OUTCOME_REPRESENTATION = {"mode": "equals", "positive_value": "Deceased"}
+#   OUTCOME_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
+# Add "invert": true to any of the above to flip which side counts as the event.
+OUTCOME_REPRESENTATION = None
 EXPL_VARS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
@@ -71,7 +80,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Time column   : {TIME_COL}")
-    print(f"Outcome column: {OUTCOME_COL}")
+    print(f"Outcome column: {OUTCOME_COL}  (representation={OUTCOME_REPRESENTATION})")
     print(f"Covariates    : {EXPL_VARS}")
     print()
 
@@ -86,6 +95,7 @@ def main() -> None:
             "kwargs": {
                 "time_col": TIME_COL,
                 "outcome_col": OUTCOME_COL,
+                "outcome_representation": OUTCOME_REPRESENTATION,
                 "expl_vars": EXPL_VARS,
                 "max_iterations": MAX_ITERATIONS,
                 "tolerance": TOLERANCE,

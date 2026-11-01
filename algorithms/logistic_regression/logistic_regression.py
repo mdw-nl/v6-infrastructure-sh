@@ -1,11 +1,18 @@
 """Federated logistic regression via FedAvg (federated averaging of locally-trained weights).
 
-Data contract: `feature_cols` (default FEATURE_COLS) must be numeric columns;
-`target_col` (default TARGET_COL) must be an already-binary (0/1) column.
-Both must be present under the same names on every node. This algorithm does
-no categorical encoding or outcome derivation -- that's the caller's
-responsibility (see data/ for how LUNG1/BEACH provide already-clean columns).
-A missing column raises a clear ValueError. See admm_logistic_regression.py's
+Data contract: `feature_cols` (default FEATURE_COLS) must be numeric columns,
+present under the same names on every node. `target_col` (default TARGET_COL)
+must resolve to a binary (0/1) column -- either because it already is one, or
+because `target_representation` (default TARGET_REPRESENTATION, None) says
+how to derive 0/1 from it, e.g. `{"mode": "presence"}` when the target
+column's value being present/missing (not its content) indicates the event,
+or `{"mode": "equals", "positive_value": ...}` / `{"mode": "isin",
+"positive_values": [...]}` when a specific value (or set of values) means the
+event occurred. See _derive_binary for the full set of modes. Any other data
+cleaning or categorical encoding is still the caller's responsibility (see
+data/ for how LUNG1/BEACH provide already-clean columns). A missing column,
+an unknown representation mode, or a column that still isn't binary after
+representation raises a clear ValueError. See admm_logistic_regression.py's
 README for a full comparison against this algorithm's ADMM-consensus sibling,
 which converges to a centralized/pooled fit where this FedAvg approach only
 approximates it.
@@ -21,7 +28,8 @@ from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
 
 FEATURE_COLS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
-TARGET_COL = "deadstatus.event"      
+TARGET_COL = "deadstatus.event"
+TARGET_REPRESENTATION = None
 N_ROUNDS = 20
 LOCAL_EPOCHS = 5
 LEARNING_RATE = 0.1
@@ -61,11 +69,67 @@ def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
         raise ValueError(msg)
 
 
+def _derive_binary(series: pd.Series, representation: dict | None, column_name: str) -> pd.Series:
+    """Resolve a raw column to 0/1 (NaN preserved for later dropna), either as-is or
+    via a representation spec: {"mode": "presence"} (1 if not null, 0 if null),
+    {"mode": "equals", "positive_value": ...} (1 if value matches, else 0), or
+    {"mode": "isin", "positive_values": [...]} (1 if value is one of these, else 0).
+    Any mode accepts "invert": true to flip the result. Raises ValueError if the
+    resulting column (after representation, or as-is when none is given) isn't
+    numeric and binary."""
+    if not representation:
+        result = series
+    else:
+        mode = representation.get("mode")
+        if mode == "presence":
+            result = series.notna().astype(float)
+        elif mode == "equals":
+            positive_value = representation["positive_value"]
+            result = series.where(series.isna(), (series == positive_value).astype(float))
+        elif mode == "isin":
+            positive_values = representation["positive_values"]
+            result = series.where(series.isna(), series.isin(positive_values).astype(float))
+        else:
+            msg = (
+                f"column {column_name!r}: unknown representation mode {mode!r}; "
+                f"expected one of 'presence', 'equals', 'isin'"
+            )
+            error(msg)
+            raise ValueError(msg)
+        if representation.get("invert"):
+            result = result.where(result.isna(), 1.0 - result)
+
+    try:
+        numeric = pd.to_numeric(result, errors="raise")
+    except (ValueError, TypeError) as exc:
+        msg = (
+            f"column {column_name!r} is not numeric ({exc}); if it isn't already binary "
+            f"(0/1), derive it with a representation dict, e.g. {{'mode': 'presence'}} if "
+            f"the value's presence/absence indicates the event"
+        )
+        error(msg)
+        raise ValueError(msg) from exc
+
+    non_null = numeric.dropna()
+    bad_values = sorted(non_null.loc[~non_null.isin([0.0, 1.0])].unique().tolist())
+    if bad_values:
+        msg = (
+            f"column {column_name!r} contains non-binary value(s) {bad_values[:5]} "
+            f"(representation={representation!r}); derive it to 0/1 first via a "
+            f"representation dict, e.g. {{'mode': 'equals', 'positive_value': ...}} or "
+            f"{{'mode': 'isin', 'positive_values': [...]}}"
+        )
+        error(msg)
+        raise ValueError(msg)
+    return numeric
+
+
 @algorithm_client
 def central(
     client: AlgorithmClient,
     feature_cols: list = FEATURE_COLS,
     target_col: str = TARGET_COL,
+    target_representation: dict = TARGET_REPRESENTATION,
     n_rounds: int = N_ROUNDS,
     local_epochs: int = LOCAL_EPOCHS,
     learning_rate: float = LEARNING_RATE,
@@ -84,7 +148,7 @@ def central(
     info("=" * 60)
     info(f"Organizations : {[org_names[oid] for oid in org_ids]}")
     info(f"Features      : {feature_cols}")
-    info(f"Target        : {target_col}")
+    info(f"Target        : {target_col}  (representation={target_representation})")
     info(f"Rounds        : {n_rounds}  |  Local epochs : {local_epochs}")
     info(f"Learning rate : {learning_rate}  |  Train ratio  : {train_ratio}")
     info(f"Batch ratio   : {batch_ratio}  |  Seed         : {seed}")
@@ -99,6 +163,7 @@ def central(
             "kwargs": {
                 "feature_cols": feature_cols,
                 "target_col": target_col,
+                "target_representation": target_representation,
                 "train_ratio": train_ratio,
                 "seed": seed,
             },
@@ -142,6 +207,7 @@ def central(
                 "kwargs": {
                     "feature_cols": feature_cols,
                     "target_col": target_col,
+                    "target_representation": target_representation,
                     "state_dict": global_state,
                     "learning_rate": learning_rate,
                     "local_epochs": local_epochs,
@@ -198,6 +264,7 @@ def central(
                 "kwargs": {
                     "feature_cols": feature_cols,
                     "target_col": target_col,
+                    "target_representation": target_representation,
                     "state_dict": global_state,
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
@@ -247,12 +314,14 @@ def compute_stats(
     df: pd.DataFrame,
     feature_cols: list,
     target_col: str,
+    target_representation: dict = TARGET_REPRESENTATION,
     train_ratio: float = TRAIN_TEST_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
     _require_columns(df, [*feature_cols, target_col], "compute_stats")
     empty = {"n": 0, "sum": [0.0] * len(feature_cols), "sum_sq": [0.0] * len(feature_cols)}
     info(f"Dataset: {len(df)} total rows")
+    df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
     df_clean = df.dropna(subset=feature_cols + [target_col])
     info(f"After dropna: {len(df_clean)} usable rows ({len(df) - len(df_clean)} dropped)")
     if len(df_clean) == 0:
@@ -278,6 +347,7 @@ def partial(
     state_dict: dict,
     global_mean: list,
     global_std: list,
+    target_representation: dict = TARGET_REPRESENTATION,
     learning_rate: float = LEARNING_RATE,
     local_epochs: int = LOCAL_EPOCHS,
     train_ratio: float = TRAIN_TEST_RATIO,
@@ -285,6 +355,7 @@ def partial(
     seed: int = RANDOM_SEED,
 ) -> dict:
     _require_columns(df, [*feature_cols, target_col], "partial")
+    df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
     df_clean = df.dropna(subset=feature_cols + [target_col])
     if len(df_clean) == 0:
         info("No usable rows after dropna, skipping update")
@@ -335,11 +406,13 @@ def evaluate(
     state_dict: dict,
     global_mean: list,
     global_std: list,
+    target_representation: dict = TARGET_REPRESENTATION,
     train_ratio: float = TRAIN_TEST_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
     _require_columns(df, [*feature_cols, target_col], "evaluate")
     info(f"Dataset: {len(df)} total rows")
+    df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
     df_clean = df.dropna(subset=feature_cols + [target_col])
     info(f"After dropna: {len(df_clean)} usable rows ({len(df) - len(df_clean)} dropped)")
     if len(df_clean) == 0:

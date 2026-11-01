@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from kaplan_meier import _derive_binary
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 
@@ -286,3 +287,57 @@ def test_central_ci_bounds_are_clamped_to_valid_probability_range() -> None:
     result = _run_central([df], time_col="Survival.time", event_col="deadstatus.event", step_days=5)
     for point in result["curve"]:
         assert 0.0 <= point["ci_lower"] <= point["survival"] <= point["ci_upper"] <= 1.0
+
+
+# ── event_representation ────────────────────────────────────────────────────────
+
+
+def test_derive_binary_presence_mode() -> None:
+    series = pd.Series(["2020-01-01", None, "2021-06-15"])
+    result = _derive_binary(series, {"mode": "presence"}, "death_date")
+    assert result.tolist() == [1.0, 0.0, 1.0]
+
+
+def test_derive_binary_equals_mode_preserves_missing() -> None:
+    series = pd.Series(["Deceased", "Alive", None])
+    result = _derive_binary(series, {"mode": "equals", "positive_value": "Deceased"}, "status")
+    assert result.tolist()[:2] == [1.0, 0.0]
+    assert pd.isna(result.iloc[2])
+
+
+def test_derive_binary_raises_when_non_binary_without_representation() -> None:
+    with pytest.raises(ValueError, match=r"not numeric"):
+        _derive_binary(pd.Series(["Deceased", "Alive"]), None, "status")
+
+
+def test_get_time_range_applies_event_representation() -> None:
+    df = pd.DataFrame(
+        {"Survival.time": [10, 20, 30], "death_date": ["2020-01-01", None, "2021-01-01"]}
+    )
+    result = _call_partial(
+        df, "get_time_range", time_col="Survival.time", event_col="death_date",
+        event_representation={"mode": "presence"},
+    )
+    assert result["n"] == 3
+
+
+def test_central_end_to_end_with_presence_representation_matches_equivalent_binary_column() -> None:
+    # A death-date presence column and the equivalent pre-derived 0/1 column
+    # must produce the identical KM curve.
+    df_dates = pd.DataFrame(
+        {
+            "Survival.time": [10, 20, 30, 40, 50],
+            "death_date": ["2020-01-01", None, "2020-03-01", None, "2020-05-01"],
+        }
+    )
+    df_binary = pd.DataFrame(
+        {"Survival.time": [10, 20, 30, 40, 50], "event": [1, 0, 1, 0, 1]}
+    )
+    result_dates = _run_central(
+        [df_dates], time_col="Survival.time", event_col="death_date",
+        event_representation={"mode": "presence"}, step_days=10,
+    )
+    result_binary = _run_central(
+        [df_binary], time_col="Survival.time", event_col="event", step_days=10,
+    )
+    assert result_dates["curve"] == result_binary["curve"]

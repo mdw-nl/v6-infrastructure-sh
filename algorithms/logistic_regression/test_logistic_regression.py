@@ -16,6 +16,7 @@ from logistic_regression import (
     TARGET_COL,
     TRAIN_TEST_RATIO,
     LogisticRegressionModel,
+    _derive_binary,
     _sd_from_list,
     _sd_to_list,
 )
@@ -390,3 +391,71 @@ def test_partial_raises_clear_error_for_missing_column() -> None:
             },
             organizations=org_ids,
         )
+
+
+# ── target_representation ──────────────────────────────────────────────────────
+
+
+def test_derive_binary_identity_passthrough_when_already_binary() -> None:
+    series = pd.Series([0, 1, 0, None])
+    result = _derive_binary(series, None, "y")
+    assert result.tolist()[:3] == [0.0, 1.0, 0.0]
+    assert pd.isna(result.iloc[3])
+
+
+def test_derive_binary_presence_mode() -> None:
+    # e.g. a death-date column: present means the event occurred.
+    series = pd.Series(["2020-01-01", None, "2021-06-15"])
+    result = _derive_binary(series, {"mode": "presence"}, "death_date")
+    assert result.tolist() == [1.0, 0.0, 1.0]
+
+
+def test_derive_binary_equals_mode() -> None:
+    series = pd.Series(["Deceased", "Alive", "Deceased", None])
+    result = _derive_binary(series, {"mode": "equals", "positive_value": "Deceased"}, "status")
+    assert result.tolist()[:3] == [1.0, 0.0, 1.0]
+    assert pd.isna(result.iloc[3])  # missing stays missing, not coerced to 0
+
+
+def test_derive_binary_isin_mode() -> None:
+    series = pd.Series(["Dead", "Deceased", "Alive"])
+    result = _derive_binary(series, {"mode": "isin", "positive_values": ["Dead", "Deceased"]}, "status")
+    assert result.tolist() == [1.0, 1.0, 0.0]
+
+
+def test_derive_binary_invert_flips_any_mode() -> None:
+    series = pd.Series(["2020-01-01", None])
+    result = _derive_binary(series, {"mode": "presence", "invert": True}, "death_date")
+    assert result.tolist() == [0.0, 1.0]
+
+
+def test_derive_binary_raises_on_unknown_mode() -> None:
+    with pytest.raises(ValueError, match=r"unknown representation mode"):
+        _derive_binary(pd.Series([0, 1]), {"mode": "nonsense"}, "y")
+
+
+def test_derive_binary_raises_when_result_is_not_binary() -> None:
+    with pytest.raises(ValueError, match=r"non-binary value"):
+        _derive_binary(pd.Series([0, 1, 2]), None, "y")
+
+
+def test_derive_binary_raises_when_identity_column_is_not_numeric() -> None:
+    with pytest.raises(ValueError, match=r"not numeric"):
+        _derive_binary(pd.Series(["Deceased", "Alive"]), None, "status")
+
+
+def test_compute_stats_derives_target_from_presence_representation() -> None:
+    # End-to-end: compute_stats actually applies target_representation, not just
+    # _derive_binary in isolation.
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "death_date": ["2020-01-01", None, "2021-01-01", None]})
+    result = _call_partial(
+        df, "compute_stats", feature_cols=["x"], target_col="death_date",
+        target_representation={"mode": "presence"}, train_ratio=1.0, seed=1,
+    )
+    assert result["n"] == 4
+
+
+def test_compute_stats_raises_clear_error_for_non_binary_target_without_representation() -> None:
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "status": ["Deceased", "Alive", "Deceased"]})
+    with pytest.raises(ValueError, match=r"not numeric"):
+        _call_partial(df, "compute_stats", feature_cols=["x"], target_col="status", train_ratio=1.0, seed=1)

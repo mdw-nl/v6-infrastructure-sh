@@ -17,17 +17,55 @@ actual available columns) if a configured column doesn't exist on a node — non
 silently skip a misconfigured column. None of them do any categorical encoding, outcome
 derivation, or data cleaning themselves; preparing data to the contract below is the caller's
 responsibility (see the root README's **Data** section and `data/datavalgen/` for how this
-repo's own test datasets do that).
+repo's own test datasets do that) — **except** for the one binary column each of
+`logistic_regression`/`admm_logistic_regression`/`coxph`/`kaplan_meier` needs (see
+**Representing a binary column differently** below), where a representation spec lets you
+derive 0/1 from the raw column instead of pre-processing it.
 
 | Algorithm | Kwargs | Data contract |
 |---|---|---|
 | `average` | `column` | Numeric column, same name on every node. |
-| `logistic_regression` | `feature_cols`, `target_col` | `feature_cols`: numeric. `target_col`: already binary (0/1). |
-| `admm_logistic_regression` | `feature_cols`, `target_col` | Same contract as `logistic_regression` — see its own README for the full comparison between the two. |
-| `coxph` | `time_col`, `outcome_col`, `expl_vars` | `time_col`: non-negative numeric duration. `outcome_col`: binary 0/1 event indicator (1 = event, 0 = censored). `expl_vars`: numeric covariates. Nodes with ≤10 observed events are excluded from the analysis (a per-node privacy threshold, not configurable via kwarg). |
-| `kaplan_meier` | `time_col`, `event_col` | Same time/event contract as `coxph`. Optional Gaussian/Poisson noise injection on event times (`noise_type`/`snr`/`random_seed`) is a privacy mechanism, not a data requirement. |
+| `logistic_regression` | `feature_cols`, `target_col`, `target_representation` | `feature_cols`: numeric. `target_col`: binary (0/1), or derived to 0/1 via `target_representation` — see below. |
+| `admm_logistic_regression` | `feature_cols`, `target_col`, `target_representation` | Same contract as `logistic_regression` — see its own README for the full comparison between the two. |
+| `coxph` | `time_col`, `outcome_col`, `outcome_representation`, `expl_vars` | `time_col`: non-negative numeric duration. `outcome_col`: binary 0/1 event indicator (1 = event, 0 = censored), or derived to 0/1 via `outcome_representation` — see below. `expl_vars`: numeric covariates. Nodes with ≤10 observed events are excluded from the analysis (a per-node privacy threshold, not configurable via kwarg). |
+| `kaplan_meier` | `time_col`, `event_col`, `event_representation` | Same time/event contract as `coxph` (`event_representation` plays the same role as `outcome_representation`). Optional Gaussian/Poisson noise injection on event times (`noise_type`/`snr`/`random_seed`) is a privacy mechanism, not a data requirement. |
 | `fed_statistics` | `statistics` (dict of `{column: [stat, ...]}`) | Any column present under that name on every node — no fixed schema. `counts`/`binned_counts` work on any column type; `minmax`/`mean`/`std`/`quantiles` require the column to be numeric (or numeric-coercible), else a clear `TypeError`. |
 | `argos_cnn` | `patient_col`/`slice_col`/`ct_col`/`gt_col`/`label_col`, `num_classes`, `num_channels`, `min_bound`/`max_bound`, `patch_size`, `seed` | CT only (HU windowing is CT-specific). Axial slices, consistently oriented and resampled to the same voxel spacing across every patient/node — **never validated** (the code doesn't read a NIfTI's affine); violating this produces silently wrong results, not an error. Every slice must be exactly `patch_size` x `patch_size` (divisible by 32) — a mismatch now raises a clear error. GT label values must be integers in `[0, num_classes)`. See `argos_cnn/README.md` and `argos_cnn/argos_cnn.py`'s module docstring for the full detail. |
+
+### Representing a binary column differently
+
+`logistic_regression`, `admm_logistic_regression`, `coxph`, and `kaplan_meier` each need one
+binary (0/1) column — a target/outcome/event indicator. Real data rarely stores that as a
+clean 0/1: a death might be recorded as a death date that's either present or missing, or as
+a status column holding `"Deceased"`/`"Alive"`, rather than as `1`/`0`. Rather than requiring
+every node to pre-process its data (or rebuilding the algorithm image per dataset), each of
+these four algorithms accepts a second kwarg alongside its binary column name —
+`target_representation` for `logistic_regression`/`admm_logistic_regression`,
+`outcome_representation` for `coxph`, `event_representation` for `kaplan_meier` — that
+describes how to derive 0/1 from the raw column, evaluated inside the algorithm on each
+node's actual data:
+
+```python
+None                                                       # default: column is already 0/1
+{"mode": "presence"}                                       # 1 if the value is present, 0 if null
+                                                             #   (e.g. a death date column: given vs. missing)
+{"mode": "equals", "positive_value": "Deceased"}            # 1 if the value equals this, else 0
+{"mode": "isin", "positive_values": ["Deceased", "Dead"]}   # 1 if the value is one of these, else 0
+{"mode": "presence", "invert": true}                        # any mode accepts "invert" to flip 1/0
+```
+
+A row whose raw value is missing stays missing after `equals`/`isin` (not coerced to 0), so it's
+excluded the same way a missing value in any other required column already is. If the column
+isn't already binary and no representation (or the wrong one) is given, the algorithm raises a
+clear `ValueError` naming the offending values, instead of silently producing a wrong result —
+this is a change from previous behavior, where a non-binary column in this position was never
+validated.
+
+**This needs a rebuild once per algorithm**, not per dataset: the representation logic runs
+inside the algorithm's `@data` functions on each node, so the capability itself has to be in
+the image. After that one rebuild (or after pulling the updated published image — see below),
+switching between a binary column, a presence/absence column, or a categorical column is a
+`run_study.py` kwarg change with no further rebuild.
 
 ## Python environment (uv)
 
@@ -119,6 +157,8 @@ To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, 
 `logistic_regression/run_study.py` also exposes `N_ROUNDS`/`LOCAL_EPOCHS`/`LEARNING_RATE`/`TRAIN_TEST_RATIO`/`BATCH_RATIO`/`RANDOM_SEED` as real `central()` keyword arguments (forwarded into every `compute_stats`/`partial`/`evaluate` sub-task) — previously these were module globals read directly inside `central()`'s body, so changing them required editing `logistic_regression.py` and rebuilding the image; now they're overridable from `run_study.py` like every other algorithm's hyperparameters.
 
 `average/`, `coxph/`, `kaplan_meier/`, and `logistic_regression/` now also raise a clear `ValueError` (listing the missing column name(s) and the dataset's available columns) instead of a raw `KeyError` when a configured column doesn't exist on a node's data — the same contract `fed_statistics/` already had via `_validate_column`/`_numeric_series`. This surfaces a typo'd column name in task logs immediately instead of as a buried pandas traceback.
+
+`logistic_regression/`, `admm_logistic_regression/`, `coxph/`, and `kaplan_meier/` each also expose `TARGET_REPRESENTATION`/`OUTCOME_REPRESENTATION`/`EVENT_REPRESENTATION` in their `run_study.py` — see **Representing a binary column differently** above for the full spec. A column that's already 0/1 doesn't need this (leave it `None`); it's for when the binary signal is stored some other way (a date that's present or missing, a status string, etc.) and you don't want to pre-process the column on every node to match. This also means a column that's non-binary with no (or the wrong) representation now raises a `ValueError` instead of silently feeding garbage into training/fitting.
 
 ## Adding your own algorithm
 

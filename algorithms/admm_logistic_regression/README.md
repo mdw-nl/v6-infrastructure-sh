@@ -12,23 +12,32 @@ for how to build and run it against this harness, same as any other algorithm he
 
 ## ⚠️ This algorithm only does federated learning, not data preparation
 
-`central()` takes `feature_cols` and `target_col` as arguments (see `run_study.py`), exactly like
-`logistic_regression/`. It assumes:
+`central()` takes `feature_cols`, `target_col`, and `target_representation` as arguments (see
+`run_study.py`), exactly like `logistic_regression/`. It assumes:
 
 - Every column in `feature_cols` is **already numeric** on every node.
-- `target_col` is **already a binary (0/1) column** on every node.
+- `target_col` is **binary (0/1)**, either already or after deriving it with
+  `target_representation` — a dict describing how to turn the raw column into 0/1, e.g.
+  `{"mode": "presence"}` if the column's value being present/missing (not its content) indicates
+  the event, or `{"mode": "equals", "positive_value": ...}` / `{"mode": "isin",
+  "positive_values": [...]}` if a specific value (or set of values) means the event occurred.
+  Leave it `None` (the default) if `target_col` is already 0/1. See
+  `algorithms/README.md`'s **Representing a binary column differently** for the full spec —
+  it's shared verbatim with `logistic_regression/`, `coxph/`, and `kaplan_meier/`.
 - All of these columns exist, under the **exact same names**, on every node's data.
 
-This algorithm does **not** encode categorical variables, derive outcomes from other columns, or
-validate your data beyond checking the above columns exist (missing columns raise a clear
-`ValueError`; wrong *content* — e.g. a non-numeric feature, or a target that isn't actually binary
-— will not raise, it will just silently produce wrong results). Preparing data to this contract is
-the caller's responsibility — use `data/datavalgen` (schema validation) or your own pipeline, not
-this algorithm, for that. See `data/generate_beach_data.py` for a worked example: it generates raw
+This algorithm does **not** encode categorical variables or otherwise clean your data beyond
+checking the above columns exist and, after representation, resolving `target_col` to 0/1
+(missing columns, an unknown representation mode, or a column that still isn't binary after
+representation all raise a clear `ValueError` — naming the offending column/values rather than
+silently producing wrong results). Preparing `feature_cols` to be numeric is still the caller's
+responsibility — use `data/datavalgen` (schema validation) or your own pipeline, not this
+algorithm, for that. See `data/generate_beach_data.py` for a worked example: it generates raw
 BEACH-schema clinical data (text stage labels, a vital-status + follow-up-days outcome) *and*
 precomputes clean numeric/binary columns (`t_stage_code`, `n_stage_code`, `m_stage_code`,
 `overall_stage_code`, `two_year_survival`) from it, so this algorithm never has to see the raw
-columns.
+columns — though with `target_representation` you could now point `target_col` at the raw
+vital-status column instead and skip that precomputation for the target specifically.
 
 ## How it differs from `logistic_regression/`
 
