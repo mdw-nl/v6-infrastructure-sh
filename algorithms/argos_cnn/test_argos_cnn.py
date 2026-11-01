@@ -1,13 +1,11 @@
 import random
 
+import argos_cnn
 import nibabel as nib
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
-
-import argos_cnn
 from argos_cnn import (
     CT_COL,
     GT_COL,
@@ -16,6 +14,7 @@ from argos_cnn import (
     PATIENT_COL,
     RANDOM_SEED,
     SLICE_COL,
+    _filter_organizations,
     _normalize_ct,
     _sample_batch,
     _state_dict_to_str,
@@ -25,6 +24,7 @@ from argos_cnn import (
     dice_score,
 )
 from model import ConvResBlock, IdentityBlock, ModResNet
+from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 PATCH_SIZE = 4
 NUM_CHANNELS = 3
@@ -502,6 +502,35 @@ def test_central_seed_is_a_real_override_for_the_initial_model_weights() -> None
     result_a = _run(1)
     result_b = _run(2)
     assert result_a["state_dict"] != result_b["state_dict"]
+
+
+# ── organizations ──────────────────────────────────────────────────────────────
+
+
+def test_filter_organizations_restricts_to_named_orgs() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}]
+    assert _filter_organizations(orgs, ["beta"], "central") == [{"id": 1, "name": "beta"}]
+
+
+def test_filter_organizations_raises_for_unknown_name() -> None:
+    with pytest.raises(ValueError, match=r"ghost"):
+        _filter_organizations([{"id": 0, "name": "alpha"}], ["ghost"], "central")
+
+
+def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
+    # n_rounds=0 isolates the organizations filter from the training loop --
+    # central() returns before ever creating a partial task.
+    df = pd.DataFrame(columns=[PATIENT_COL, SLICE_COL, CT_COL, GT_COL, LABEL_COL])
+    client = MockAlgorithmClient(datasets=[[{"database": df, "input_data": {}}]], module="argos_cnn")
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"nonexistent-org"):
+        client.task.create(
+            input_={
+                "method": "central",
+                "kwargs": {"n_rounds": 0, "organizations": ["nonexistent-org"]},
+            },
+            organizations=[org_ids[0]],
+        )
 
 
 def test_partial_column_names_are_real_overrides_not_just_fallback_defaults(tmp_path) -> None:

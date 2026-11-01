@@ -29,6 +29,12 @@ TARGET_COL = "deadstatus.event"
 #   TARGET_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
 # Add "invert": true to any of the above to flip which side counts as 1.
 TARGET_REPRESENTATION = None
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 TRAIN_RATIO = 0.8
 RANDOM_SEED = 42
 
@@ -73,6 +79,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Features      : {FEATURE_COLS}")
     print(f"Target        : {TARGET_COL}  (representation={TARGET_REPRESENTATION})")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"num_rounds={NUM_ROUNDS}  rho={RHO}  alpha={ALPHA}  lambda_={LAMBDA_}")
     print(f"abs_tol={ABS_TOL}  rel_tol={REL_TOL}  train_ratio={TRAIN_RATIO}  seed={RANDOM_SEED}")
     print()
@@ -89,6 +96,7 @@ def main() -> None:
                 "feature_cols": FEATURE_COLS,
                 "target_col": TARGET_COL,
                 "target_representation": TARGET_REPRESENTATION,
+                "organizations": ORGANIZATIONS,
                 "num_rounds": NUM_ROUNDS,
                 "rho": RHO,
                 "alpha": ALPHA,

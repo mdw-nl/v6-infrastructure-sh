@@ -16,6 +16,16 @@ INITIATING_ORG = "alpha"
 
 OUTPUT_WEIGHTS_FILE = "argos_cnn_trained_weights.pt"
 
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+# Unlike the hyperparameters below, this is infra config rather than a model
+# hyperparameter, so it's passed through kwargs as a deliberate exception to
+# the "no hyperparameter kwargs here" rule just below.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
+
 
 def main() -> None:
     client = Client(SERVER_URL, SERVER_PORT, API_PATH)
@@ -53,6 +63,7 @@ def main() -> None:
         "(N_ROUNDS/LOCAL_STEPS/BATCH_SIZE/LEARNING_RATE/PATCH_SIZE/NUM_CLASSES/"
         "NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the manifest column names)"
     )
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print()
 
     task = client.task.create(
@@ -68,8 +79,9 @@ def main() -> None:
             # NUM_CLASSES/NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the
             # manifest column names, all in argos_cnn.py) are the single source
             # of truth. Passing copies here would silently override them if the
-            # two ever drifted.
-            "kwargs": {},
+            # two ever drifted. ORGANIZATIONS is infra config, not a
+            # hyperparameter, so it's the one deliberate exception.
+            "kwargs": {"organizations": ORGANIZATIONS},
         },
         # Only "default" (the CSV manifest) is requested here — the "nifti"
         # folder database is deliberately not requested, so vantage6's @data()

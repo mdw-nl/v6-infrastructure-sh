@@ -16,6 +16,14 @@ representation raises a clear ValueError. See admm_logistic_regression.py's
 README for a full comparison against this algorithm's ADMM-consensus sibling,
 which converges to a centralized/pooled fit where this FedAvg approach only
 approximates it.
+
+`central()` also takes an `organizations` kwarg (default None): a list of
+organization names to restrict the sub-task fan-out to, instead of every
+organization in the collaboration. Without it, an organization that's
+registered in the collaboration but has no node actually running gets a
+sub-task it can never pick up, and client.wait_for_results() then blocks
+forever waiting on it -- `organizations` lets the caller exclude it. An
+unknown organization name raises a clear ValueError.
 """
 
 import time
@@ -124,12 +132,44 @@ def _derive_binary(series: pd.Series, representation: dict | None, column_name: 
     return numeric
 
 
+def _filter_organizations(orgs: list, organizations: list | None, method_name: str) -> list:
+    """Restrict `orgs` (from client.organization.list()) to the ones named in
+    `organizations`, or return `orgs` unchanged if `organizations` is None
+    (the default: every organization in the collaboration). Filtering by name
+    lets a caller exclude an organization that's registered in the
+    collaboration but has no node actually running -- fanning a sub-task out
+    to one hangs client.wait_for_results() forever, since it waits for a
+    result from every organization a task was sent to."""
+    if organizations is None:
+        return orgs
+    if not organizations:
+        msg = (
+            f"{method_name}: 'organizations' was given as an empty list; omit it "
+            f"(or pass None) to use every organization in the collaboration, or "
+            f"list at least one organization name"
+        )
+        error(msg)
+        raise ValueError(msg)
+    available = {org["name"] for org in orgs}
+    missing = [name for name in organizations if name not in available]
+    if missing:
+        msg = (
+            f"{method_name}: organization(s) {missing} not found in the collaboration; "
+            f"available organizations: {sorted(available)}"
+        )
+        error(msg)
+        raise ValueError(msg)
+    selected = set(organizations)
+    return [org for org in orgs if org["name"] in selected]
+
+
 @algorithm_client
 def central(
     client: AlgorithmClient,
     feature_cols: list = FEATURE_COLS,
     target_col: str = TARGET_COL,
     target_representation: dict = TARGET_REPRESENTATION,
+    organizations: list | None = None,
     n_rounds: int = N_ROUNDS,
     local_epochs: int = LOCAL_EPOCHS,
     learning_rate: float = LEARNING_RATE,
@@ -138,7 +178,7 @@ def central(
     seed: int = RANDOM_SEED,
 ) -> dict:
     t_total = time.time()
-    orgs = client.organization.list()
+    orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
     org_names = {org["id"]: org["name"] for org in orgs}
     n_features = len(feature_cols)

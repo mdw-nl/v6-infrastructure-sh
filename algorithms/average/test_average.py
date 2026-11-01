@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from average import _filter_organizations
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 
@@ -124,3 +125,46 @@ def test_central_default_column_matches_lung1_data() -> None:
     result = _run_central([df], column="age")
     assert result["n"] > 0
     assert result["average"] is not None
+
+
+# ── organizations ──────────────────────────────────────────────────────────────
+
+
+def test_filter_organizations_none_returns_all() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}]
+    assert _filter_organizations(orgs, None, "central") == orgs
+
+
+def test_filter_organizations_restricts_to_named_orgs() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}, {"id": 2, "name": "gamma"}]
+    result = _filter_organizations(orgs, ["beta"], "central")
+    assert result == [{"id": 1, "name": "beta"}]
+
+
+def test_filter_organizations_raises_for_unknown_name() -> None:
+    orgs = [{"id": 0, "name": "alpha"}]
+    with pytest.raises(ValueError, match=r"ghost"):
+        _filter_organizations(orgs, ["ghost"], "central")
+
+
+def test_filter_organizations_raises_for_empty_list() -> None:
+    orgs = [{"id": 0, "name": "alpha"}]
+    with pytest.raises(ValueError, match=r"empty list"):
+        _filter_organizations(orgs, [], "central")
+
+
+def test_central_organizations_excludes_the_other_node() -> None:
+    # End-to-end: central() actually applies the organizations filter, not
+    # just _filter_organizations in isolation -- excluding a node's org name
+    # must mean its data never contributes to the result.
+    included = pd.DataFrame({"age": [10, 20, 30]})
+    excluded = pd.DataFrame({"age": [1000, 1000, 1000]})
+    result = _run_central([included, excluded], column="age", organizations=["mock-0"])
+    assert result["n"] == 3
+    assert np.isclose(result["average"], 20.0)
+
+
+def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
+    df = pd.DataFrame({"age": [10, 20, 30]})
+    with pytest.raises(ValueError, match=r"nonexistent-org"):
+        _run_central([df], column="age", organizations=["nonexistent-org"])

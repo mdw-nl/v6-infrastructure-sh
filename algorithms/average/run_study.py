@@ -12,6 +12,12 @@ ALGORITHM_IMAGE = "average:latest"
 COLLABORATION_NAME = "v6-demo"
 INITIATING_ORG = "alpha"
 VARIABLE = "age"
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 
 
 def main() -> None:
@@ -46,6 +52,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Variable      : {VARIABLE}")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print()
 
     task = client.task.create(
@@ -54,7 +61,7 @@ def main() -> None:
         name="Federated Average",
         description="Compute average across all nodes in the collaboration",
         image=ALGORITHM_IMAGE,
-        input_={"method": "central", "kwargs": {"column": VARIABLE}},
+        input_={"method": "central", "kwargs": {"column": VARIABLE, "organizations": ORGANIZATIONS}},
         databases=[{"label": "default"}],
     )
     task_id = task["id"]

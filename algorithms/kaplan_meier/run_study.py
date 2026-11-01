@@ -25,6 +25,12 @@ EVENT_COL = "deadstatus.event"
 #   EVENT_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
 # Add "invert": true to any of the above to flip which side counts as the event.
 EVENT_REPRESENTATION = None
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 STEP_DAYS = 30
 
 # Optional privacy noise injection on event times before aggregation.
@@ -124,6 +130,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Time column   : {TIME_COL}")
     print(f"Event column  : {EVENT_COL}  (representation={EVENT_REPRESENTATION})")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Step days     : {STEP_DAYS}")
     print(f"Noise type    : {NOISE_TYPE}")
     if NOISE_TYPE != "none":
@@ -143,6 +150,7 @@ def main() -> None:
                 "time_col": TIME_COL,
                 "event_col": EVENT_COL,
                 "event_representation": EVENT_REPRESENTATION,
+                "organizations": ORGANIZATIONS,
                 "step_days": STEP_DAYS,
                 "noise_type": NOISE_TYPE,
                 "snr": SNR,

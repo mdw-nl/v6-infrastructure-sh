@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from kaplan_meier import _derive_binary
+from kaplan_meier import _derive_binary, _filter_organizations
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 
@@ -341,3 +341,36 @@ def test_central_end_to_end_with_presence_representation_matches_equivalent_bina
         [df_binary], time_col="Survival.time", event_col="event", step_days=10,
     )
     assert result_dates["curve"] == result_binary["curve"]
+
+
+# ── organizations ──────────────────────────────────────────────────────────────
+
+
+def test_filter_organizations_restricts_to_named_orgs() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}]
+    assert _filter_organizations(orgs, ["beta"], "central") == [{"id": 1, "name": "beta"}]
+
+
+def test_filter_organizations_raises_for_unknown_name() -> None:
+    with pytest.raises(ValueError, match=r"ghost"):
+        _filter_organizations([{"id": 0, "name": "alpha"}], ["ghost"], "central")
+
+
+def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
+    df = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
+    with pytest.raises(ValueError, match=r"nonexistent-org"):
+        _run_central(
+            [df], time_col="Survival.time", event_col="deadstatus.event",
+            organizations=["nonexistent-org"],
+        )
+
+
+def test_central_organizations_excludes_the_other_node() -> None:
+    included = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
+    excluded = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
+    result = _run_central(
+        [included, excluded], time_col="Survival.time", event_col="deadstatus.event",
+        organizations=["mock-0"],
+    )
+    # Would be 6 if the "excluded" org's identical data was wrongly included too.
+    assert result["n_patients"] == 3

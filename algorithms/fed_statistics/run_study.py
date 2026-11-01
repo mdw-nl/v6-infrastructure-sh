@@ -20,6 +20,12 @@ STATISTICS = {
 }
 FILTERS = {}
 OPTIONS = {}
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 
 
 def _is_nested_bounds_dict(value) -> bool:
@@ -85,6 +91,7 @@ def main() -> None:
     print(f"Initiating org: {INITIATING_ORG} (id={initiating_org['id']})")
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Statistics    : {STATISTICS}")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print()
 
     task = client.task.create(
@@ -99,6 +106,7 @@ def main() -> None:
                 "statistics": STATISTICS,
                 "filters": FILTERS,
                 "options": OPTIONS,
+                "organizations": ORGANIZATIONS,
             },
         },
         databases=[{"label": "default"}],

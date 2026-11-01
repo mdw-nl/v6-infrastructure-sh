@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
-from fed_statistics import compute_local_stats_frame
+from fed_statistics import _filter_organizations, compute_local_stats_frame
 
 
 def _build_datasets() -> list:
@@ -126,3 +126,59 @@ def test_secondary_suppression_shifts_exactly_one_unsuppressed_category() -> Non
     # different exact number.
     assert real_counts["a"]["lower"] != real_counts["a"]["upper"]
     assert real_counts["a"]["lower"] != 8
+
+
+# ── organizations ──────────────────────────────────────────────────────────────
+
+
+def test_filter_organizations_restricts_to_named_orgs() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}]
+    assert _filter_organizations(orgs, ["beta"], "central") == [{"id": 1, "name": "beta"}]
+
+
+def test_filter_organizations_raises_for_unknown_name() -> None:
+    with pytest.raises(ValueError, match=r"ghost"):
+        _filter_organizations([{"id": 0, "name": "alpha"}], ["ghost"], "central")
+
+
+def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
+    datasets = _build_datasets()
+    client = MockAlgorithmClient(
+        datasets=[[{"database": df, "input_data": {}}] for df in datasets],
+        module="fed_statistics",
+    )
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    with pytest.raises(ValueError, match=r"nonexistent-org"):
+        client.task.create(
+            input_={
+                "method": "central",
+                "kwargs": {
+                    "statistics": {"age": ["mean"]},
+                    "organizations": ["nonexistent-org"],
+                },
+            },
+            organizations=org_ids,
+        )
+
+
+def test_central_organizations_excludes_the_other_node() -> None:
+    # The two built-in datasets have different "age" values; restricting to
+    # mock-0 only must match running central() on that one dataset alone.
+    datasets = _build_datasets()
+    client = MockAlgorithmClient(
+        datasets=[[{"database": df, "input_data": {}}] for df in datasets],
+        module="fed_statistics",
+    )
+    org_ids = [organization["id"] for organization in client.organization.list()]
+    task = client.task.create(
+        input_={
+            "method": "central",
+            "kwargs": {
+                "statistics": {"age": ["mean"]},
+                "organizations": ["mock-0"],
+            },
+        },
+        organizations=org_ids,
+    )
+    result = client.wait_for_results(task.get("id"))[0]
+    assert result["columns"]["age"]["mean"] == pytest.approx(datasets[0]["age"].mean())

@@ -24,6 +24,12 @@ OUTCOME_COL = "deadstatus.event"
 # Add "invert": true to any of the above to flip which side counts as the event.
 OUTCOME_REPRESENTATION = None
 EXPL_VARS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
 
@@ -82,6 +88,7 @@ def main() -> None:
     print(f"Time column   : {TIME_COL}")
     print(f"Outcome column: {OUTCOME_COL}  (representation={OUTCOME_REPRESENTATION})")
     print(f"Covariates    : {EXPL_VARS}")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print()
 
     task = client.task.create(
@@ -97,6 +104,7 @@ def main() -> None:
                 "outcome_col": OUTCOME_COL,
                 "outcome_representation": OUTCOME_REPRESENTATION,
                 "expl_vars": EXPL_VARS,
+                "organizations": ORGANIZATIONS,
                 "max_iterations": MAX_ITERATIONS,
                 "tolerance": TOLERANCE,
             },

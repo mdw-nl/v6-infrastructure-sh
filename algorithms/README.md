@@ -67,6 +67,34 @@ the image. After that one rebuild (or after pulling the updated published image 
 switching between a binary column, a presence/absence column, or a categorical column is a
 `run_study.py` kwarg change with no further rebuild.
 
+### Restricting which organizations/nodes a task runs on
+
+Every algorithm's `central()` also takes an `organizations` kwarg (default `None`): a list of
+organization names to restrict the sub-task fan-out to, instead of every organization in the
+collaboration.
+
+Without it, `central()` calls `client.organization.list()` and sends every resulting sub-task
+to *every* organization in the collaboration — including one that's registered there but has no
+node container actually running. That sub-task is never picked up, and
+`client.wait_for_results()` has no timeout: it blocks until it has a result from every
+organization a task was sent to, so the whole run hangs indefinitely rather than failing.
+`organizations` lets the caller exclude an organization like that:
+
+```python
+ORGANIZATIONS = None                    # default: every organization in the collaboration
+ORGANIZATIONS = ["alpha", "beta"]       # only fan sub-tasks out to these two
+```
+
+Naming an organization that doesn't exist in the collaboration raises a clear `ValueError`
+listing the available organization names, the same way a missing data column does. Passing an
+empty list is also rejected with a clear error, rather than silently running on zero nodes.
+
+This is purely infra/node-selection config, orthogonal to each algorithm's data contract above
+— it composes with `coxph`'s own `minimum_events` per-node exclusion (which narrows the fan-out
+further, after each node's own event count comes back) rather than replacing it. Like the
+representation kwargs, this needs a rebuild once per algorithm and is then a `run_study.py`
+kwarg change (`ORGANIZATIONS`) with no further rebuild.
+
 ## Python environment (uv)
 
 A single `pyproject.toml` at the **repo root** covers all dependencies for both `algorithms/` (run study scripts, lint algorithm code) and `data/` (synthetic data generation, e.g. `datavalgen`). Install [uv](https://docs.astral.sh/uv/) if you don't have it:
@@ -159,6 +187,8 @@ To test a different column/variable (e.g. `VARIABLE` in `average/run_study.py`, 
 `average/`, `coxph/`, `kaplan_meier/`, and `logistic_regression/` now also raise a clear `ValueError` (listing the missing column name(s) and the dataset's available columns) instead of a raw `KeyError` when a configured column doesn't exist on a node's data — the same contract `fed_statistics/` already had via `_validate_column`/`_numeric_series`. This surfaces a typo'd column name in task logs immediately instead of as a buried pandas traceback.
 
 `logistic_regression/`, `admm_logistic_regression/`, `coxph/`, and `kaplan_meier/` each also expose `TARGET_REPRESENTATION`/`OUTCOME_REPRESENTATION`/`EVENT_REPRESENTATION` in their `run_study.py` — see **Representing a binary column differently** above for the full spec. A column that's already 0/1 doesn't need this (leave it `None`); it's for when the binary signal is stored some other way (a date that's present or missing, a status string, etc.) and you don't want to pre-process the column on every node to match. This also means a column that's non-binary with no (or the wrong) representation now raises a `ValueError` instead of silently feeding garbage into training/fitting.
+
+Every algorithm's `run_study.py` (`average/`, `logistic_regression/`, `admm_logistic_regression/`, `coxph/`, `kaplan_meier/`, `fed_statistics/`, `argos_cnn/`) now also exposes `ORGANIZATIONS` — see **Restricting which organizations/nodes a task runs on** above for the full spec. Previously `central()` always fanned its sub-tasks out to every organization in the collaboration (`client.organization.list()`), with no way to exclude one that's registered there but has no node actually running — that organization's sub-task is never picked up, and since `client.wait_for_results()` has no timeout, the whole run then hangs indefinitely rather than failing. Leave `ORGANIZATIONS` as `None` (the default, every algorithm's current behavior) unless the collaboration includes an organization like that.
 
 ## Adding your own algorithm
 

@@ -27,6 +27,14 @@ categories or otherwise clean data -- that's a data-preparation concern for
 the caller (e.g. ``data/datavalgen``), not this algorithm's. A column that
 still isn't binary after representation raises a clear ValueError rather
 than silently producing wrong results.
+
+``central()`` also takes an ``organizations`` kwarg (default ``None``): a
+list of organization names to restrict the ADMM sub-task fan-out to, instead
+of every organization in the collaboration. Without it, an organization
+that's registered in the collaboration but has no node actually running gets
+a sub-task it can never pick up, and ``client.wait_for_results()`` then
+blocks forever waiting on it -- ``organizations`` lets the caller exclude it.
+An unknown organization name raises a clear ValueError.
 """
 
 from typing import Any
@@ -55,6 +63,37 @@ def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
         )
         error(msg)
         raise ValueError(msg)
+
+
+def _filter_organizations(orgs: list, organizations: list | None, method_name: str) -> list:
+    """Restrict `orgs` (from client.organization.list()) to the ones named in
+    `organizations`, or return `orgs` unchanged if `organizations` is None
+    (the default: every organization in the collaboration). Filtering by name
+    lets a caller exclude an organization that's registered in the
+    collaboration but has no node actually running -- fanning a sub-task out
+    to one hangs client.wait_for_results() forever, since it waits for a
+    result from every organization a task was sent to."""
+    if organizations is None:
+        return orgs
+    if not organizations:
+        msg = (
+            f"{method_name}: 'organizations' was given as an empty list; omit it "
+            f"(or pass None) to use every organization in the collaboration, or "
+            f"list at least one organization name"
+        )
+        error(msg)
+        raise ValueError(msg)
+    available = {org["name"] for org in orgs}
+    missing = [name for name in organizations if name not in available]
+    if missing:
+        msg = (
+            f"{method_name}: organization(s) {missing} not found in the collaboration; "
+            f"available organizations: {sorted(available)}"
+        )
+        error(msg)
+        raise ValueError(msg)
+    selected = set(organizations)
+    return [org for org in orgs if org["name"] in selected]
 
 
 def _derive_binary(series: pd.Series, representation: dict | None, column_name: str) -> pd.Series:
@@ -305,6 +344,7 @@ def central(
     feature_cols: list,
     target_col: str,
     target_representation: dict | None = None,
+    organizations: list | None = None,
     num_rounds: int = 100,
     rho: float = 3,
     alpha: float = 1.4,
@@ -321,8 +361,8 @@ def central(
     convergence each round, then report the final coefficients plus
     convergence history and validation metrics.
     """
-    organizations = client.organization.list()
-    org_ids = [organization.get("id") for organization in organizations]
+    orgs = _filter_organizations(client.organization.list(), organizations, "central")
+    org_ids = [org.get("id") for org in orgs]
     num_sites = len(org_ids)
 
     if num_sites == 0:

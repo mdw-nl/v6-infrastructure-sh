@@ -6,6 +6,7 @@ from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
 from admm_logistic_regression import (
     _derive_binary,
+    _filter_organizations,
     _logistic_admm_objective,
     _predict_proba,
     _split_train_val,
@@ -484,3 +485,37 @@ def test_compute_stats_raises_clear_error_for_non_binary_target_without_represen
     df = pd.DataFrame({"x0": [1.0, 2.0], "x1": [1.0, 2.0], "status": ["Deceased", "Alive"]})
     with pytest.raises(ValueError, match=r"not numeric"):
         _call_node_method(df, "compute_stats", feature_cols=FEATURE_COLS, target_col="status", train_ratio=1.0, seed=1)
+
+
+# ── organizations ──────────────────────────────────────────────────────────────
+
+
+def test_filter_organizations_restricts_to_named_orgs() -> None:
+    orgs = [{"id": 0, "name": "alpha"}, {"id": 1, "name": "beta"}]
+    assert _filter_organizations(orgs, ["beta"], "central") == [{"id": 1, "name": "beta"}]
+
+
+def test_filter_organizations_raises_for_unknown_name() -> None:
+    with pytest.raises(ValueError, match=r"ghost"):
+        _filter_organizations([{"id": 0, "name": "alpha"}], ["ghost"], "central")
+
+
+def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
+    df = _classification_df(30, seed=22)
+    with pytest.raises(ValueError, match=r"nonexistent-org"):
+        _run_central(
+            [df], feature_cols=FEATURE_COLS, target_col=TARGET_COL,
+            num_rounds=1, organizations=["nonexistent-org"],
+        )
+
+
+def test_central_organizations_excludes_the_other_node() -> None:
+    included = _classification_df(60, seed=23)
+    excluded = pd.DataFrame({"x0": [None], "x1": [None], "y": [None]})
+    result = _run_central(
+        [included, excluded], feature_cols=FEATURE_COLS, target_col=TARGET_COL,
+        num_rounds=1, organizations=["mock-0"],
+    )
+    # One entry, not two -- proves the all-NaN "excluded" org's sub-task was
+    # never sent at all, not just that it happened to contribute 0 patients.
+    assert result["patient_counts"] == [48]

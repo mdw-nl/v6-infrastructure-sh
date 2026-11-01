@@ -22,6 +22,12 @@ TARGET_COL = "deadstatus.event"
 #   TARGET_REPRESENTATION = {"mode": "isin", "positive_values": ["Deceased", "Dead"]}
 # Add "invert": true to any of the above to flip which side counts as 1.
 TARGET_REPRESENTATION = None
+# Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
+# None to target every organization in the collaboration (the default). Set
+# this if the collaboration also lists an organization with no node actually
+# running -- fanning a sub-task out to it hangs wait_for_results() forever.
+#   ORGANIZATIONS = ["alpha", "beta"]
+ORGANIZATIONS = None
 N_ROUNDS = 20
 LOCAL_EPOCHS = 5
 LEARNING_RATE = 0.1
@@ -63,6 +69,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Features      : {FEATURE_COLS}")
     print(f"Target        : {TARGET_COL}  (representation={TARGET_REPRESENTATION})")
+    print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
     print(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
     print(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
@@ -80,6 +87,7 @@ def main() -> None:
                 "feature_cols": FEATURE_COLS,
                 "target_col": TARGET_COL,
                 "target_representation": TARGET_REPRESENTATION,
+                "organizations": ORGANIZATIONS,
                 "n_rounds": N_ROUNDS,
                 "local_epochs": LOCAL_EPOCHS,
                 "learning_rate": LEARNING_RATE,
