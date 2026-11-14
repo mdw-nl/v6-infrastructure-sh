@@ -18,6 +18,11 @@ VARIABLE = "age"
 # running -- fanning a sub-task out to it hangs wait_for_results() forever.
 #   ORGANIZATIONS = ["alpha", "beta"]
 ORGANIZATIONS = None
+# Minimum participation guards (both no-ops at their defaults, same tier as
+# kaplan_meier/coxph's min_rows/min_organizations -- requester-side, catches
+# misconfiguration, not a node-enforced policy).
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 def main() -> None:
@@ -53,6 +58,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Variable      : {VARIABLE}")
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print()
 
     task = client.task.create(
@@ -61,7 +67,15 @@ def main() -> None:
         name="Federated Average",
         description="Compute average across all nodes in the collaboration",
         image=ALGORITHM_IMAGE,
-        input_={"method": "central", "kwargs": {"column": VARIABLE, "organizations": ORGANIZATIONS}},
+        input_={
+            "method": "central",
+            "kwargs": {
+                "column": VARIABLE,
+                "organizations": ORGANIZATIONS,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
+            },
+        },
         databases=[{"label": "default"}],
     )
     task_id = task["id"]

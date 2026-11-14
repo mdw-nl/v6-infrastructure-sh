@@ -28,7 +28,9 @@ def _run_central(datasets: list, **kwargs) -> dict:
 def test_partial_basic_sum_and_count() -> None:
     df = pd.DataFrame({"age": [10, 20, 30]})
     result = _call_partial(df, column="age")
-    assert result == {"sum": 60.0, "count": 3}
+    assert result["sum"] == 60.0
+    assert result["count"] == 3
+    assert isinstance(result["organization_id"], int)
 
 
 def test_partial_raises_clear_error_for_missing_column() -> None:
@@ -42,19 +44,22 @@ def test_partial_raises_clear_error_for_missing_column() -> None:
 def test_partial_skips_nan_values() -> None:
     df = pd.DataFrame({"age": [10, None, 30, None]})
     result = _call_partial(df, column="age")
-    assert result == {"sum": 40.0, "count": 2}
+    assert result["sum"] == 40.0
+    assert result["count"] == 2
 
 
 def test_partial_all_nan_returns_zero_sum_and_count() -> None:
     df = pd.DataFrame({"age": [None, None]})
     result = _call_partial(df, column="age")
-    assert result == {"sum": 0.0, "count": 0}
+    assert result["sum"] == 0.0
+    assert result["count"] == 0
 
 
 def test_partial_empty_dataframe() -> None:
     df = pd.DataFrame({"age": []})
     result = _call_partial(df, column="age")
-    assert result == {"sum": 0.0, "count": 0}
+    assert result["sum"] == 0.0
+    assert result["count"] == 0
 
 
 # ── central ────────────────────────────────────────────────────────────────────

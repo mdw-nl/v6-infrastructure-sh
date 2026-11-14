@@ -119,7 +119,9 @@ def test_compute_stats_drops_rows_with_missing_feature_or_target() -> None:
 def test_compute_stats_all_nan_returns_empty() -> None:
     df = pd.DataFrame({"x": [None, None], "y": [None, None]})
     result = _call_partial(df, "compute_stats", feature_cols=["x"], target_col="y")
-    assert result == {"n": 0, "sum": [0.0], "sum_sq": [0.0]}
+    assert result["n"] == 0
+    assert result["sum"] == [0.0]
+    assert result["sum_sq"] == [0.0]
 
 
 def test_compute_stats_train_ratio_is_seeded_deterministically() -> None:

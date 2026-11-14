@@ -179,7 +179,9 @@ def test_compute_stats_drops_rows_with_missing_feature_or_target() -> None:
 def test_compute_stats_all_missing_returns_empty() -> None:
     df = pd.DataFrame({"x0": [None, None], "x1": [None, None], "y": [None, None]})
     result = _call_node_method(df, "compute_stats", feature_cols=FEATURE_COLS, target_col=TARGET_COL)
-    assert result == {"n": 0, "sum": [0.0, 0.0], "sum_sq": [0.0, 0.0]}
+    assert result["n"] == 0
+    assert result["sum"] == [0.0, 0.0]
+    assert result["sum_sq"] == [0.0, 0.0]
 
 
 # ── column validation ──────────────────────────────────────────────────────────

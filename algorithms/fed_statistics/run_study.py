@@ -26,6 +26,14 @@ OPTIONS = {}
 # running -- fanning a sub-task out to it hangs wait_for_results() forever.
 #   ORGANIZATIONS = ["alpha", "beta"]
 ORGANIZATIONS = None
+# Minimum participation guards (both no-ops at their defaults). min_rows
+# excludes an organization's contribution entirely (from every column and
+# statistic) if its row count is below this -- a different, complementary
+# concern from OPTIONS["suppress_threshold"], which only hides one
+# statistic's displayed value. min_organizations errors if too few
+# organizations clear min_rows, naming the ones that fell short.
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 def _is_nested_bounds_dict(value) -> bool:
@@ -92,6 +100,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Statistics    : {STATISTICS}")
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print()
 
     task = client.task.create(
@@ -107,6 +116,8 @@ def main() -> None:
                 "filters": FILTERS,
                 "options": OPTIONS,
                 "organizations": ORGANIZATIONS,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
             },
         },
         databases=[{"label": "default"}],

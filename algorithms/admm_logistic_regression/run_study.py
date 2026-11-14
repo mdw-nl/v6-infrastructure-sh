@@ -45,6 +45,12 @@ LAMBDA_ = 0.0
 ABS_TOL = 1e-3
 REL_TOL = 1e-3
 
+# Minimum participation guards (both no-ops at their defaults, same tier as
+# kaplan_meier/coxph's min_rows/min_organizations -- requester-side, catches
+# misconfiguration, not a node-enforced policy).
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
+
 
 def main() -> None:
     client = Client(SERVER_URL, SERVER_PORT, API_PATH)
@@ -82,6 +88,7 @@ def main() -> None:
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"num_rounds={NUM_ROUNDS}  rho={RHO}  alpha={ALPHA}  lambda_={LAMBDA_}")
     print(f"abs_tol={ABS_TOL}  rel_tol={REL_TOL}  train_ratio={TRAIN_RATIO}  seed={RANDOM_SEED}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print()
 
     task = client.task.create(
@@ -105,6 +112,8 @@ def main() -> None:
                 "rel_tol": REL_TOL,
                 "train_ratio": TRAIN_RATIO,
                 "seed": RANDOM_SEED,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
             },
         },
         databases=[{"label": "default"}],

@@ -53,6 +53,17 @@ RANDOM_SEED = None
 MIN_ORGANIZATIONS = 1
 MIN_ROWS = 0
 
+# Risk-set change guard, same small-cell concern as coxph's risk_set_min_change
+# (adapted to counts only, no covariates here): if fewer than this many
+# individuals left the risk set since the last released time step, that step's
+# n_risk is held and its n_events are folded forward into whichever later step
+# finally releases -- no event is dropped, just attributed to a coarser time
+# window. MAX_HELD_EVENT_FRACTION aborts the run if too much of the curve ends
+# up folded this way, instead of silently returning degraded time resolution.
+# Both are no-ops at their defaults (1, None).
+RISK_SET_MIN_CHANGE = 1
+MAX_HELD_EVENT_FRACTION = None
+
 
 def plot_km_curve(curve: list, n_patients: int, n_events: int, step_days: int, output_path: str = "km_curve.png") -> None:
     times = [p["time"] for p in curve]
@@ -144,6 +155,7 @@ def main() -> None:
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Step days     : {STEP_DAYS}")
     print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
+    print(f"Risk-set min change: {RISK_SET_MIN_CHANGE}  (max held event fraction: {MAX_HELD_EVENT_FRACTION})")
     print(f"Noise type    : {NOISE_TYPE}")
     if NOISE_TYPE != "none":
         print(f"SNR           : {SNR}")
@@ -169,6 +181,8 @@ def main() -> None:
                 "random_seed": RANDOM_SEED,
                 "min_organizations": MIN_ORGANIZATIONS,
                 "min_rows": MIN_ROWS,
+                "risk_set_min_change": RISK_SET_MIN_CHANGE,
+                "max_held_event_fraction": MAX_HELD_EVENT_FRACTION,
             },
         },
         databases=[{"label": "default"}],

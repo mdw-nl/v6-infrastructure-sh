@@ -35,6 +35,21 @@ that's registered in the collaboration but has no node actually running gets
 a sub-task it can never pick up, and ``client.wait_for_results()`` then
 blocks forever waiting on it -- ``organizations`` lets the caller exclude it.
 An unknown organization name raises a clear ValueError.
+
+``central()`` also takes ``min_organizations`` (default 1, i.e. no
+restriction) and ``min_rows`` (default 0, i.e. no restriction). Phase 1
+(``compute_stats``) is the only point where each node's local row count is
+known, so that's where ``min_rows`` is checked: any organization reporting
+fewer than ``min_rows`` training rows is dropped entirely from every later
+phase (the ADMM rounds, evaluation, prediction collection), not just from
+the patient count -- its stats don't contribute to the federated
+mean/std either. If fewer than ``min_organizations`` organizations still
+qualify after that, ``central()`` returns a clear error naming the ones
+that fell short, instead of silently proceeding on whichever organizations
+happen to qualify -- having enough organizations nominally included in the
+task is not the same as having enough organizations with enough data. Like
+``organizations``, these are requester-supplied kwargs (set in
+run_study.py), not a node-enforced policy.
 """
 
 from typing import Any
@@ -49,6 +64,9 @@ from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.tools.util import error, info, warn
 
 np.random.seed(67)
+
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 # ── Column validation and train/validation split ─────────────────────────────
@@ -353,6 +371,8 @@ def central(
     rel_tol: float = 1e-12,
     train_ratio: float = 0.8,
     seed: int = 42,
+    min_organizations: int = MIN_ORGANIZATIONS,
+    min_rows: int = MIN_ROWS,
 ) -> dict[str, Any]:
     """
     Orchestrate ADMM logistic regression across all nodes: compute a federated
@@ -361,13 +381,28 @@ def central(
     convergence each round, then report the final coefficients plus
     convergence history and validation metrics.
     """
+    min_organizations = int(min_organizations)
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    if min_rows < 0:
+        return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org.get("id") for org in orgs]
+    org_name_by_id = {org.get("id"): org.get("name") for org in orgs}
     num_sites = len(org_ids)
 
     if num_sites == 0:
         warn("No organizations found in collaboration - nothing to do.")
         return {"status": "no_organizations"}
+
+    if num_sites < min_organizations:
+        return {
+            "error": (
+                f"Only {num_sites} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     num_features = len(feature_cols)
     total_features = num_features + 1  # +1 for intercept
@@ -379,6 +414,7 @@ def central(
     info(f"Features      : {feature_cols}")
     info(f"Target        : {target_col}  (representation={target_representation})")
     info(f"Rounds        : {num_rounds}  |  rho={rho}  alpha={alpha}  lambda_={lambda_}")
+    info(f"Min organizations: {min_organizations}  (min rows per org: {min_rows})")
 
     # ── Phase 1: federated normalization statistics ──────────────────────────
     stats_task = client.task.create(
@@ -398,13 +434,36 @@ def central(
     )
     stats_results = client.wait_for_results(task_id=stats_task.get("id"))
 
-    patient_counts = [int(r["n"]) for r in stats_results]
+    # Drop any organization below min_rows entirely before anything else is
+    # computed -- it must not contribute to the normalization stats or any
+    # later ADMM round, not just be excluded from the patient count.
+    qualifying = [r for r in stats_results if int(r["n"]) >= min_rows]
+    qualifying_ids = [r["organization_id"] for r in qualifying]
+
+    if len(qualifying_ids) < min_organizations:
+        below_threshold = [
+            org_name_by_id.get(r["organization_id"], r["organization_id"])
+            for r in stats_results
+            if int(r["n"]) < min_rows
+        ]
+        return {
+            "error": (
+                f"Only {len(qualifying_ids)} organization(s) have at least "
+                f"'min_rows'={min_rows} usable training rows, but 'min_organizations' "
+                f"requires at least {min_organizations}. Organization(s) below the row "
+                f"threshold: {below_threshold}."
+            )
+        }
+    org_ids = qualifying_ids
+    num_sites = len(org_ids)
+
+    patient_counts = [int(r["n"]) for r in qualifying]
     total_patients = int(sum(patient_counts))
     if total_patients == 0:
         return {"error": "No usable data across any organization"}
 
-    global_sum = np.array([r["sum"] for r in stats_results]).sum(axis=0)
-    global_sum_sq = np.array([r["sum_sq"] for r in stats_results]).sum(axis=0)
+    global_sum = np.array([r["sum"] for r in qualifying]).sum(axis=0)
+    global_sum_sq = np.array([r["sum_sq"] for r in qualifying]).sum(axis=0)
     global_mean = global_sum / total_patients
     global_var = global_sum_sq / total_patients - global_mean**2
     global_std = np.sqrt(np.maximum(global_var, 1e-8))
@@ -637,7 +696,9 @@ def central(
 
 
 @data(1)
+@algorithm_client
 def compute_stats(
+    client: AlgorithmClient,
     df1: pd.DataFrame,
     feature_cols: list,
     target_col: str,
@@ -646,17 +707,25 @@ def compute_stats(
     seed: int = 42,
 ) -> dict[str, Any]:
     """Local training-row count plus feature sums/sum-of-squares, used by
-    central() to compute the global mean/std for normalization."""
+    central() to compute the global mean/std for normalization.
+    organization_id is reported so central() can tell which organization a
+    given row count belongs to, to drop ones below min_rows from every
+    later phase (not just the aggregate patient count)."""
     _require_columns(df1, [*feature_cols, target_col], "compute_stats")
     train_df, _ = _split_train_val(df1, feature_cols, target_col, train_ratio, seed, target_representation)
     n = len(train_df)
     info(f"Dataset: {len(df1)} total rows, {n} usable training rows after cleaning")
     if n == 0:
-        return {"n": 0, "sum": [0.0] * len(feature_cols), "sum_sq": [0.0] * len(feature_cols)}
+        return {
+            "n": 0,
+            "sum": [0.0] * len(feature_cols),
+            "sum_sq": [0.0] * len(feature_cols),
+            "organization_id": client.organization_id,
+        }
 
     feat_sum = train_df[feature_cols].sum().tolist()
     feat_sum_sq = (train_df[feature_cols] ** 2).sum().tolist()
-    return {"n": n, "sum": feat_sum, "sum_sq": feat_sum_sq}
+    return {"n": n, "sum": feat_sum, "sum_sq": feat_sum_sq, "organization_id": client.organization_id}
 
 
 @data(1)

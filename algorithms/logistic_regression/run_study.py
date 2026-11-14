@@ -35,6 +35,12 @@ TRAIN_TEST_RATIO = 0.8   # fraction of each node's data used for training
 BATCH_RATIO = 0.3        # fraction of the training set sampled per local update
 RANDOM_SEED = 42
 
+# Minimum participation guards (both no-ops at their defaults, same tier as
+# kaplan_meier/coxph's min_rows/min_organizations -- requester-side, catches
+# misconfiguration, not a node-enforced policy).
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
+
 
 def main() -> None:
     client = Client(SERVER_URL, SERVER_PORT, API_PATH)
@@ -73,6 +79,7 @@ def main() -> None:
     print(f"Rounds        : {N_ROUNDS}  |  Local epochs : {LOCAL_EPOCHS}")
     print(f"Learning rate : {LEARNING_RATE}  |  Train ratio  : {TRAIN_TEST_RATIO}")
     print(f"Batch ratio   : {BATCH_RATIO}  |  Seed         : {RANDOM_SEED}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print()
 
     task = client.task.create(
@@ -94,6 +101,8 @@ def main() -> None:
                 "train_ratio": TRAIN_TEST_RATIO,
                 "batch_ratio": BATCH_RATIO,
                 "seed": RANDOM_SEED,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
             },
         },
         databases=[{"label": "default"}],

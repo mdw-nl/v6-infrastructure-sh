@@ -35,6 +35,27 @@ having enough organizations with enough data. These are requester-supplied
 kwargs (set in run_study.py), not a node-enforced policy: they catch
 misconfiguration (an accidentally tiny test file, a near-empty node) but a
 requester who wants to bypass them can just set them to 0/1.
+
+`central()` also takes `risk_set_min_change` (default 1, i.e. no
+restriction) and `max_held_event_fraction` (default None, i.e. no
+restriction) -- the same small-risk-set-change concern as coxph's
+risk-set jump guard, adapted to this algorithm's counts-only (no
+covariates) shape. `n_risk`/`n_events` (summed across nodes) are released
+fresh at every time step; if only one individual's risk-set status
+changed between two consecutive steps, that reveals whether that specific
+individual -- at a specific node, in a specific narrow time window --
+had an event or was censored, which is itself a small-cell disclosure, on
+top of whatever protection the existing `step_days` binning already gives.
+`risk_set_min_change` guards this: if fewer than that many individuals
+left the risk set since the last released step, that step's `n_risk` is
+held (repeated) instead of releasing a fresh (thin) one, and its
+`n_events` are carried forward and folded into whichever later step
+finally releases -- no event is ever dropped from the curve's total, it's
+just attributed to a coarser time window. `max_held_event_fraction` aborts
+the run with a clear error if the fraction of events that ended up
+folded into a held step exceeds it, instead of silently returning a
+curve with degraded time resolution. Like `min_organizations`/`min_rows`
+above, these are requester-supplied kwargs, not a node-enforced policy.
 """
 
 import numpy as np
@@ -55,6 +76,9 @@ RANDOM_SEED = None
 
 MIN_ORGANIZATIONS = 1
 MIN_ROWS = 0
+
+RISK_SET_MIN_CHANGE = 1
+MAX_HELD_EVENT_FRACTION = None
 
 
 def _apply_gaussian_noise(df: pd.DataFrame, time_col: str, snr: float) -> pd.DataFrame:
@@ -138,6 +162,44 @@ def _filter_organizations(orgs: list, organizations: list | None, method_name: s
     return [org for org in orgs if org["name"] in selected]
 
 
+def apply_risk_set_merge_guard(n_risk: np.ndarray, n_events: np.ndarray, min_change: int) -> tuple:
+    """Hold `n_risk` at a time step repeated from the last released step
+    whenever fewer than `min_change` individuals left the risk set since
+    that release, instead of releasing a fresh (thin) one -- see the module
+    docstring for why. `n_events` at a held step is never dropped: it's
+    carried forward and folded into whichever later step finally releases,
+    so `sum(n_events)` is identical before and after.
+
+    Returns (n_risk, n_events, held_mask) where held_mask[i] is True if
+    step i's n_risk was held rather than freshly released.
+    """
+    n_steps = len(n_risk)
+    held_mask = np.zeros(n_steps, dtype=bool)
+    if min_change <= 1 or n_steps == 0:
+        return n_risk.copy(), n_events.copy(), held_mask
+
+    out_risk = n_risk.copy()
+    out_events = n_events.copy()
+    last_released = n_risk[0]
+    pending_events = 0
+    for i in range(1, n_steps):
+        departed = last_released - n_risk[i]
+        if departed < min_change:
+            held_mask[i] = True
+            out_risk[i] = last_released
+            pending_events += out_events[i]
+            out_events[i] = 0
+        else:
+            last_released = n_risk[i]
+            out_events[i] += pending_events
+            pending_events = 0
+    if pending_events:
+        # Never cleared the threshold again before the grid ended -- fold
+        # whatever's left into the last step rather than dropping it.
+        out_events[-1] += pending_events
+    return out_risk, out_events, held_mask
+
+
 def _derive_binary(series: pd.Series, representation: dict | None, column_name: str) -> pd.Series:
     """Resolve a raw column to 0/1 (NaN preserved for later dropna), either as-is or
     via a representation spec: {"mode": "presence"} (1 if not null, 0 if null),
@@ -206,6 +268,8 @@ def central(
     random_seed: int = RANDOM_SEED,
     min_organizations: int = MIN_ORGANIZATIONS,
     min_rows: int = MIN_ROWS,
+    risk_set_min_change: int = RISK_SET_MIN_CHANGE,
+    max_held_event_fraction: float | None = MAX_HELD_EVENT_FRACTION,
 ) -> dict:
     noise_type = noise_type or "none"
     if noise_type not in NOISE_TYPES:
@@ -216,6 +280,13 @@ def central(
         return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
     if min_rows < 0:
         return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+    risk_set_min_change = int(risk_set_min_change)
+    if risk_set_min_change < 1:
+        return {"error": f"'risk_set_min_change' must be at least 1, got {risk_set_min_change}"}
+    if max_held_event_fraction is not None and not (0.0 <= max_held_event_fraction <= 1.0):
+        return {
+            "error": f"'max_held_event_fraction' must be between 0 and 1, got {max_held_event_fraction}"
+        }
 
     # Both phases must apply identical noise to the same node's data, or the
     # time range computed in phase 1 won't bound the noised times used in
@@ -247,6 +318,7 @@ def central(
     info(f"Event column  : {event_col}  (representation={event_representation})")
     info(f"Step days     : {step_days}")
     info(f"Min organizations: {min_organizations}  (min rows per org: {min_rows})")
+    info(f"Risk-set min change: {risk_set_min_change}  (max held event fraction: {max_held_event_fraction})")
     info(f"Noise type    : {noise_type}")
     if noise_type != "none":
         info(f"SNR           : {snr}")
@@ -331,6 +403,22 @@ def central(
     for r in events_results:
         global_n_risk += np.array(r["n_risk"], dtype=int)
         global_n_events += np.array(r["n_events"], dtype=int)
+
+    original_n_events = global_n_events.copy()
+    global_n_risk, global_n_events, held_mask = apply_risk_set_merge_guard(
+        global_n_risk, global_n_events, risk_set_min_change
+    )
+    if max_held_event_fraction is not None and held_mask.any() and original_n_events.sum() > 0:
+        held_fraction = float(original_n_events[held_mask].sum()) / float(original_n_events.sum())
+        if held_fraction > max_held_event_fraction:
+            return {
+                "error": (
+                    f"{held_fraction:.1%} of events were folded into a coarser time step by the "
+                    f"'risk_set_min_change' guard, exceeding 'max_held_event_fraction'="
+                    f"{max_held_event_fraction:.1%}. Lower 'risk_set_min_change' or raise "
+                    f"'max_held_event_fraction' to proceed."
+                )
+            }
 
     total_events = int(global_n_events.sum())
     info(f"Total events across all nodes: {total_events}")

@@ -24,6 +24,21 @@ registered in the collaboration but has no node actually running gets a
 sub-task it can never pick up, and client.wait_for_results() then blocks
 forever waiting on it -- `organizations` lets the caller exclude it. An
 unknown organization name raises a clear ValueError.
+
+`central()` also takes `min_organizations` (default 1, i.e. no restriction)
+and `min_rows` (default 0, i.e. no restriction). After phase 1
+(`compute_stats`), any organization reporting fewer than `min_rows` local
+training rows is dropped entirely from the rest of the run -- excluded from
+the normalization statistics, every training round, and evaluation, not
+just hidden from a count. If fewer than `min_organizations` organizations
+remain after that filtering, `central()` returns a clear error naming the
+organizations that fell short, instead of silently training on whichever
+organizations happen to qualify -- having enough organizations nominally
+included in the task is not the same as having enough organizations with
+enough data. Like `organizations`, these are requester-supplied kwargs (set
+in run_study.py), not a node-enforced policy: they catch misconfiguration
+(an accidentally tiny test file, a near-empty node), not a requester
+actively trying to bypass them.
 """
 
 import time
@@ -44,6 +59,9 @@ LEARNING_RATE = 0.1
 TRAIN_TEST_RATIO = 0.8   # fraction of each node's data used for training
 BATCH_RATIO = 0.3        # fraction of the training set sampled per local update
 RANDOM_SEED = 42
+
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 class LogisticRegressionModel(nn.Module):
@@ -176,12 +194,28 @@ def central(
     train_ratio: float = TRAIN_TEST_RATIO,
     batch_ratio: float = BATCH_RATIO,
     seed: int = RANDOM_SEED,
+    min_organizations: int = MIN_ORGANIZATIONS,
+    min_rows: int = MIN_ROWS,
 ) -> dict:
     t_total = time.time()
+    min_organizations = int(min_organizations)
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    if min_rows < 0:
+        return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
     org_names = {org["id"]: org["name"] for org in orgs}
     n_features = len(feature_cols)
+
+    if len(org_ids) < min_organizations:
+        return {
+            "error": (
+                f"Only {len(org_ids)} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     info("=" * 60)
     info("FEDERATED LOGISTIC REGRESSION")
@@ -215,13 +249,35 @@ def central(
     info(f"Stats task created (id={stats_task['id']}), waiting for {len(org_ids)} node(s)...")
     stats_results = client.wait_for_results(stats_task["id"])
 
-    total_n = sum(r["n"] for r in stats_results)
+    # Drop any organization below min_rows entirely before anything else is
+    # computed -- it must not contribute to the normalization stats, any
+    # training round, or evaluation, not just be excluded from a count.
+    qualifying = [r for r in stats_results if r["n"] >= min_rows]
+    qualifying_ids = [r["organization_id"] for r in qualifying]
+
+    if len(qualifying_ids) < min_organizations:
+        below_threshold = [
+            org_names.get(r["organization_id"], r["organization_id"])
+            for r in stats_results
+            if r["n"] < min_rows
+        ]
+        return {
+            "error": (
+                f"Only {len(qualifying_ids)} organization(s) have at least "
+                f"'min_rows'={min_rows} usable training rows, but 'min_organizations' "
+                f"requires at least {min_organizations}. Organization(s) below the row "
+                f"threshold: {below_threshold}."
+            )
+        }
+    org_ids = qualifying_ids
+
+    total_n = sum(r["n"] for r in qualifying)
     info(f"Received {len(stats_results)} result(s) — total training rows: {total_n}")
     if total_n == 0:
         return {"error": "No usable data across any organization"}
 
-    global_sum = np.array([r["sum"] for r in stats_results]).sum(axis=0)
-    global_sum_sq = np.array([r["sum_sq"] for r in stats_results]).sum(axis=0)
+    global_sum = np.array([r["sum"] for r in qualifying]).sum(axis=0)
+    global_sum_sq = np.array([r["sum_sq"] for r in qualifying]).sum(axis=0)
     global_mean = global_sum / total_n
     global_var = global_sum_sq / total_n - global_mean ** 2
     global_std = np.sqrt(np.maximum(global_var, 1e-8))
@@ -350,7 +406,9 @@ def central(
 
 
 @data(1)
+@algorithm_client
 def compute_stats(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     feature_cols: list,
     target_col: str,
@@ -358,8 +416,16 @@ def compute_stats(
     train_ratio: float = TRAIN_TEST_RATIO,
     seed: int = RANDOM_SEED,
 ) -> dict:
+    # organization_id is reported so central() can tell which organization a
+    # given row count belongs to, to drop ones below min_rows from every
+    # later round (not just the aggregate count).
     _require_columns(df, [*feature_cols, target_col], "compute_stats")
-    empty = {"n": 0, "sum": [0.0] * len(feature_cols), "sum_sq": [0.0] * len(feature_cols)}
+    empty = {
+        "n": 0,
+        "sum": [0.0] * len(feature_cols),
+        "sum_sq": [0.0] * len(feature_cols),
+        "organization_id": client.organization_id,
+    }
     info(f"Dataset: {len(df)} total rows")
     df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
     df_clean = df.dropna(subset=feature_cols + [target_col])
@@ -376,7 +442,7 @@ def compute_stats(
     n = len(train_df)
     feat_sum = train_df[feature_cols].sum().tolist()
     feat_sum_sq = (train_df[feature_cols] ** 2).sum().tolist()
-    return {"n": n, "sum": feat_sum, "sum_sq": feat_sum_sq}
+    return {"n": n, "sum": feat_sum, "sum_sq": feat_sum_sq, "organization_id": client.organization_id}
 
 
 @data(1)

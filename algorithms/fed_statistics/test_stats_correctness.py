@@ -42,7 +42,7 @@ def _run_central(statistics, filters=None, options=None) -> dict:
             "method": "central",
             "kwargs": {"statistics": statistics, "filters": filters, "options": options},
         },
-        organizations=org_ids,
+        organizations=[org_ids[0]],
     )
     return client.wait_for_results(task.get("id"))[0]
 
@@ -78,7 +78,7 @@ def test_raises_clear_error_for_missing_column() -> None:
                 "method": "central",
                 "kwargs": {"statistics": {"missing_column": ["mean"]}, "filters": None, "options": None},
             },
-            organizations=org_ids,
+            organizations=[org_ids[0]],
         )
 
 
@@ -160,7 +160,7 @@ def test_central_organizations_raises_clear_error_for_unknown_org() -> None:
                     "organizations": ["nonexistent-org"],
                 },
             },
-            organizations=org_ids,
+            organizations=[org_ids[0]],
         )
 
 
@@ -181,7 +181,7 @@ def test_central_organizations_excludes_the_other_node() -> None:
                 "organizations": ["mock-0"],
             },
         },
-        organizations=org_ids,
+        organizations=[org_ids[0]],
     )
     result = client.wait_for_results(task.get("id"))[0]
     assert result["columns"]["age"]["mean"] == pytest.approx(datasets[0]["age"].mean())

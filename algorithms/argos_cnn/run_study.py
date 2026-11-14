@@ -25,6 +25,11 @@ OUTPUT_WEIGHTS_FILE = "argos_cnn_trained_weights.pt"
 # the "no hyperparameter kwargs here" rule just below.
 #   ORGANIZATIONS = ["alpha", "beta"]
 ORGANIZATIONS = None
+# Minimum participation guards (both no-ops at their defaults) -- same
+# category as ORGANIZATIONS above (infra/participation config, not a model
+# hyperparameter), so passed through kwargs for the same reason.
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 def main() -> None:
@@ -64,6 +69,7 @@ def main() -> None:
         "NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the manifest column names)"
     )
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print()
 
     task = client.task.create(
@@ -79,9 +85,14 @@ def main() -> None:
             # NUM_CLASSES/NUM_CHANNELS/MIN_BOUND/MAX_BOUND/RANDOM_SEED, plus the
             # manifest column names, all in argos_cnn.py) are the single source
             # of truth. Passing copies here would silently override them if the
-            # two ever drifted. ORGANIZATIONS is infra config, not a
-            # hyperparameter, so it's the one deliberate exception.
-            "kwargs": {"organizations": ORGANIZATIONS},
+            # two ever drifted. ORGANIZATIONS/MIN_ORGANIZATIONS/MIN_ROWS are
+            # infra/participation config, not hyperparameters, so they're
+            # the deliberate exceptions.
+            "kwargs": {
+                "organizations": ORGANIZATIONS,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
+            },
         },
         # Only "default" (the CSV manifest) is requested here — the "nifti"
         # folder database is deliberately not requested, so vantage6's @data()

@@ -30,6 +30,20 @@ structural NaNs, so a value excluded by `inliers` isn't double-counted.
 `isin` list: `{"age": {"gte": 15, "lte": 39}}` (any of `gte`/`gt`/`lte`/`lt`),
 to subset every column's stats to a stratum rather than excluding bad values
 from one column's own stats.
+
+`central()` also takes `min_organizations` (default 1, i.e. no restriction)
+and `min_rows` (default 0, i.e. no restriction) -- a different, complementary
+concern from `options["suppress_threshold"]`. `suppress_threshold` hides one
+statistic's displayed value on one column if its underlying count is small;
+`min_rows` instead excludes an organization's contribution entirely, from
+every column and every statistic, if its total row count (after `filters`,
+before any per-column `inliers` or per-statistic computation) is too small.
+If fewer than `min_organizations` organizations clear `min_rows`, `central()`
+returns a clear error naming the organizations that fell short, instead of
+silently aggregating over whichever ones happen to qualify -- having enough
+organizations nominally included in the task is not the same as having
+enough organizations with enough rows. Like every other kwarg here, these
+are requester-supplied (set in run_study.py), not a node-enforced policy.
 """
 
 from hashlib import blake2b
@@ -60,6 +74,9 @@ DEFAULT_OPTIONS = {
     "suppress_key": None,
     "quantile_bootstrap_iterations": 1000,
 }
+
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 # ── Secondary suppression (HMAC-based, deterministic) ────────────────────────
@@ -649,19 +666,38 @@ def central(
     filters: dict = None,
     options: dict = None,
     organizations: list | None = None,
+    min_organizations: int = MIN_ORGANIZATIONS,
+    min_rows: int = MIN_ROWS,
 ) -> dict:
     stats_spec = _normalize_statistics(statistics)
     resolved_options = _normalize_options(options)
     resolved_filters = filters or {}
 
+    min_organizations = int(min_organizations)
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    min_rows = int(min_rows)
+    if min_rows < 0:
+        return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
+    org_name_by_id = {org["id"]: org["name"] for org in orgs}
+
+    if len(org_ids) < min_organizations:
+        return {
+            "error": (
+                f"Only {len(org_ids)} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     info("=" * 60)
     info("FEDERATED DESCRIPTIVE STATISTICS")
     info("=" * 60)
     info(f"Organizations : {[org['name'] for org in orgs]}")
     info(f"Columns       : {list(stats_spec.keys())}")
+    info(f"Min organizations: {min_organizations}  (min rows per org: {min_rows})")
 
     task = client.task.create(
         input_={
@@ -687,7 +723,28 @@ def central(
     if not local_results:
         return {"error": "No usable data across any organization"}
 
-    columns, warnings = aggregate_local_results(local_results, stats_spec)
+    # Drop any organization below min_rows entirely -- not just from the
+    # displayed count, from every column and every statistic -- before
+    # aggregation ever sees it. See the module docstring for why this is a
+    # different check from the per-node org-count one above: enough
+    # organizations nominally included in the task is not the same as
+    # enough organizations with enough rows.
+    qualifying = [r for r in local_results if r["row_count"] >= min_rows]
+    if len(qualifying) < min_organizations:
+        below_threshold = [
+            org_name_by_id.get(r["organization_id"], r["organization_id"])
+            for r in local_results
+            if r["row_count"] < min_rows
+        ]
+        return {
+            "error": (
+                f"Only {len(qualifying)} organization(s) have at least 'min_rows'={min_rows} "
+                f"usable rows, but 'min_organizations' requires at least {min_organizations}. "
+                f"Organization(s) below the row threshold: {below_threshold}."
+            )
+        }
+
+    columns, warnings = aggregate_local_results([r["stats"] for r in qualifying], stats_spec)
     for warning in warnings:
         warn(warning)
 
@@ -695,7 +752,9 @@ def central(
 
 
 @data(1)
+@algorithm_client
 def compute_local_stats(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     statistics: dict,
     filters: dict = None,
@@ -704,4 +763,11 @@ def compute_local_stats(
     stats_spec = _normalize_statistics(statistics)
     resolved_options = _normalize_options(options)
     info(f"Computing local statistics for columns: {list(stats_spec.keys())}")
-    return compute_local_stats_frame(df, stats_spec, filters or {}, resolved_options)
+    resolved_filters = filters or {}
+    working = apply_filters(df, resolved_filters)
+    stats = _compute_stats_for_frame(working, stats_spec, resolved_options)
+    return {
+        "organization_id": client.organization_id,
+        "row_count": len(working),
+        "stats": stats,
+    }

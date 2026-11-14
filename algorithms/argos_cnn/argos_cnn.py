@@ -78,6 +78,19 @@ registered in the collaboration but has no node actually running gets a
 sub-task it can never pick up, and client.wait_for_results() then blocks
 forever waiting on it -- organizations lets the caller exclude it. An
 unknown organization name raises a clear ValueError.
+
+central() also takes min_organizations (default 1, i.e. no restriction) and
+min_rows (default 0, i.e. no restriction) -- here "rows" means manifest
+rows (slices), since that's what partial()'s own "n" already counts.
+Round 1 is the only point where each node's row count is known (there's no
+separate lightweight phase here, unlike coxph/kaplan_meier), so that round's
+results decide which organizations qualify: any below min_rows is excluded
+from that round's own FedAvg weighting and from every later round's
+dispatch entirely, not just hidden from a count. If fewer than
+min_organizations organizations qualify, central() returns a clear error
+naming the ones that fell short, instead of silently training on whichever
+organizations happen to qualify. Like organizations, these are
+requester-supplied kwargs (set in run_study.py), not a node-enforced policy.
 """
 import base64
 import gzip
@@ -115,6 +128,9 @@ BATCH_SIZE = 1
 LEARNING_RATE = 1e-4
 POSITIVE_SLICE_BIAS = 1 / 3   # matches original get_batch_full: ~1-in-3 forced tumor-containing slice
 RANDOM_SEED = 42
+
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 def _state_dict_to_str(state_dict: dict) -> str:
@@ -290,10 +306,26 @@ def central(
     gt_col: str = GT_COL,
     label_col: str = LABEL_COL,
     organizations: list | None = None,
+    min_organizations: int = MIN_ORGANIZATIONS,
+    min_rows: int = MIN_ROWS,
 ) -> dict:
+    min_organizations = int(min_organizations)
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    if min_rows < 0:
+        return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
     org_names = {org["id"]: org["name"] for org in orgs}
+
+    if len(org_ids) < min_organizations:
+        return {
+            "error": (
+                f"Only {len(org_ids)} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     info("=" * 60)
     info("FEDERATED MODRESNET CT SEGMENTATION")
@@ -303,6 +335,7 @@ def central(
     info(f"Batch size    : {batch_size}  |  LR          : {learning_rate}  |  Patch size : {patch_size}")
     info(f"Classes       : {num_classes}  |  Channels (2.5D context) : {num_channels}")
     info(f"HU window     : [{min_bound}, {max_bound}]  |  Seed : {seed}")
+    info(f"Min organizations: {min_organizations}  (min rows per org: {min_rows})")
 
     torch.manual_seed(seed)
     global_model = ModResNet(in_channels=num_channels, num_classes=num_classes)
@@ -338,6 +371,31 @@ def central(
             description=f"Local ModResNet update, round {round_num}",
         )
         partials = client.wait_for_results(task["id"])
+
+        if round_num == 1:
+            # Round 1 is the only point where each node's row count is known
+            # (there's no separate lightweight phase here) -- decide
+            # qualification now, so a below-threshold node is excluded from
+            # this round's own FedAvg weighting below AND from every later
+            # round's dispatch, not just hidden from a count.
+            qualifying_ids = [r["organization_id"] for r in partials if r["n"] >= min_rows]
+            if len(qualifying_ids) < min_organizations:
+                below_threshold = [
+                    org_names.get(r["organization_id"], r["organization_id"])
+                    for r in partials
+                    if r["n"] < min_rows
+                ]
+                return {
+                    "error": (
+                        f"Only {len(qualifying_ids)} organization(s) have at least "
+                        f"'min_rows'={min_rows} usable rows, but 'min_organizations' "
+                        f"requires at least {min_organizations}. Organization(s) below "
+                        f"the row threshold: {below_threshold}."
+                    )
+                }
+            qualifying_id_set = set(qualifying_ids)
+            partials = [r for r in partials if r["organization_id"] in qualifying_id_set]
+            org_ids = qualifying_ids
 
         total_n = sum(r["n"] for r in partials)
         if total_n == 0:
@@ -379,7 +437,9 @@ def central(
 
 
 @data(1)
+@algorithm_client
 def partial(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     state_dict: str,
     local_steps: int = LOCAL_STEPS,
@@ -398,10 +458,13 @@ def partial(
     gt_col: str = GT_COL,
     label_col: str = LABEL_COL,
 ) -> dict:
+    # organization_id is reported so central() can tell which organization a
+    # given row count belongs to, to drop ones below min_rows from every
+    # later round (not just the aggregate count) -- see the module docstring.
     _require_columns(df, {patient_col, slice_col, ct_col, gt_col, label_col}, "partial")
     if len(df) == 0:
         info("Dataset is empty, skipping local training")
-        return {"state_dict": state_dict, "n": 0, "loss": 0.0, "dice": 0.0}
+        return {"state_dict": state_dict, "n": 0, "loss": 0.0, "dice": 0.0, "organization_id": client.organization_id}
 
     n_rows = len(df)
 
@@ -448,4 +511,5 @@ def partial(
         "n": n_rows,
         "loss": avg_loss,
         "dice": avg_dice,
+        "organization_id": client.organization_id,
     }
