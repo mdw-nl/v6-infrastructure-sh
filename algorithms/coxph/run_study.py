@@ -33,6 +33,21 @@ ORGANIZATIONS = None
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
 
+# Minimum participation guards (both no-ops at their defaults, same tier as
+# kaplan_meier's min_rows/min_organizations -- requester-side, catches
+# misconfiguration, not a node-enforced policy).
+MINIMUM_EVENTS = 10
+MIN_ORGANIZATIONS = 1
+
+# Risk-set jump guard: if fewer than RISK_SET_MIN_CHANGE individuals left the
+# risk set since the last released snapshot, the previous snapshot is held
+# instead of releasing a new (thin, individually-recoverable) one.
+# MAX_HELD_EVENT_FRACTION aborts the run if too much of the fit ends up
+# scored against held snapshots instead of silently degrading it. Both are
+# no-ops at their defaults (1, None).
+RISK_SET_MIN_CHANGE = 1
+MAX_HELD_EVENT_FRACTION = None
+
 
 def print_model_table(model_json: str) -> None:
     rows = json.loads(model_json)
@@ -89,6 +104,8 @@ def main() -> None:
     print(f"Outcome column: {OUTCOME_COL}  (representation={OUTCOME_REPRESENTATION})")
     print(f"Covariates    : {EXPL_VARS}")
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (minimum events per org: {MINIMUM_EVENTS})")
+    print(f"Risk-set min change: {RISK_SET_MIN_CHANGE}  (max held event fraction: {MAX_HELD_EVENT_FRACTION})")
     print()
 
     task = client.task.create(
@@ -107,6 +124,10 @@ def main() -> None:
                 "organizations": ORGANIZATIONS,
                 "max_iterations": MAX_ITERATIONS,
                 "tolerance": TOLERANCE,
+                "minimum_events": MINIMUM_EVENTS,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "risk_set_min_change": RISK_SET_MIN_CHANGE,
+                "max_held_event_fraction": MAX_HELD_EVENT_FRACTION,
             },
         },
         databases=[{"label": "default"}],

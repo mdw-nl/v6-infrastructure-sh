@@ -13,9 +13,17 @@ event occurred. See _derive_binary for the full set of modes. `expl_vars`
 (default EXPL_VARS) must be numeric covariates, present under the same names
 on every node. A missing column, an unknown representation mode, or a column
 that still isn't binary after representation raises a clear ValueError.
-Nodes with <= `minimum_events` (default 10, a per-node privacy threshold,
-see get_unique_event_times) observed events are excluded from the analysis
-entirely rather than contributing noisy statistics.
+Nodes with <= `minimum_events` (default 10, a per-node privacy threshold)
+observed events are excluded from the analysis entirely rather than
+contributing noisy statistics; `central()` forwards `minimum_events` to
+`get_unique_event_times` so it's overridable per run, not just per image
+build. `min_organizations` (default 1, i.e. no restriction) is checked
+*after* that exclusion: if fewer than `min_organizations` organizations
+still qualify once the ones below `minimum_events` are dropped, `central()`
+returns a clear error naming the excluded organizations, instead of
+silently proceeding on whichever ones happen to qualify -- having enough
+organizations nominally included in the task is not the same as having
+enough organizations with enough events.
 
 `central()` also takes an `organizations` kwarg (default None): a list of
 organization names to restrict the sub-task fan-out to, instead of every
@@ -27,17 +35,65 @@ unknown organization name raises a clear ValueError. This is a separate
 mechanism from the `minimum_events` exclusion above: `organizations` narrows
 the fan-out before any task is even sent, `minimum_events` excludes a node
 after its own event-count report comes back.
+
+Covariates are standardized before Newton-Raphson: `central()` derives a
+pooled centre (mean) and scale (std-dev) per covariate from the event-case
+sums `compute_summed_z` returns (`sum`/`sum_squares`/`count`), and every
+`perform_iteration` call fits on `(x - centre) / scale` instead of raw `x`.
+The Cox partial likelihood is invariant to this affine transform, so the
+fit itself is unchanged -- this is pure numerics, not a privacy or
+data-contract feature. It exists because raw covariate scale risks
+`exp(X @ beta)` overflow as beta grows during iteration, and very
+different covariate scales (e.g. age vs. a lab value in the thousands)
+otherwise produce a badly conditioned Hessian. `central()` back-transforms
+beta, the standard errors and the Hessian/covariance to original units
+once the loop ends, so reported hazard ratios are per original-unit
+increase, not per standardized unit. A covariate with ~zero variance among
+event cases (or none at all) gets scale=1 (no rescaling) instead of a
+division by zero.
+
+`central()` also takes `risk_set_min_change` (default 1, i.e. no restriction)
+and `max_held_event_fraction` (default None, i.e. no restriction). At each
+unique event time, `agg1`/`agg2` (the risk-set size and covariate sum,
+summed across nodes) are released fresh every Newton-Raphson iteration. If
+exactly one individual left the risk set since the last released snapshot,
+`(agg2(t) - agg2(t')) / (agg1(t) - agg1(t'))` recovers that individual's
+exact covariate vector -- a leak specific to this iterative risk-set
+release, not present in a single-shot aggregate. `risk_set_min_change`
+guards this: if fewer than that many individuals have left the risk set
+since the last released snapshot, the previous snapshot is held (repeated)
+instead of releasing a new one, so the subtraction above yields zero
+departures, not one. Holding a snapshot means later iterations fit against
+a slightly stale risk set at that time point, which can degrade the fit if
+it happens often; `max_held_event_fraction` aborts the run with a clear
+error if the fraction of events scored against a held snapshot exceeds it,
+instead of silently returning a degraded fit. Like `minimum_events`/
+`min_organizations` above, these are requester-supplied kwargs (set in
+run_study.py), not a node-enforced policy.
+
+Every node-side method (`get_unique_event_times`, `compute_summed_z`,
+`perform_iteration`) also verifies it was dispatched by `central()` as a
+proper vantage6 sub-task, not called directly -- which would bypass every
+guard above (`minimum_events`, the risk-set jump guard) entirely, since
+those only run inside `central()`'s orchestration. The check decodes the
+container's own token to find its task id, looks that task up, and fails
+closed (raises) unless the task has a parent (vantage6 only sets one for
+a sub-task spawned by a running container, never for a task a user
+started directly). The only exemption is `MockAlgorithmClient`, used by
+this repo's own unit tests, which has no real parent-task linkage to check.
 """
 
 import math
 
+import jwt
 import numpy as np
 import pandas as pd
 from scipy.linalg import solve
 from scipy.stats import chi2, norm
-from vantage6.algorithm.tools.util import info, warn, error
-from vantage6.algorithm.tools.decorators import algorithm_client, data
 from vantage6.algorithm.client import AlgorithmClient
+from vantage6.algorithm.tools.decorators import algorithm_client, data
+from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
+from vantage6.algorithm.tools.util import error, info, warn
 
 TIME_COL = "Survival.time"
 OUTCOME_COL = "deadstatus.event"
@@ -45,6 +101,40 @@ OUTCOME_REPRESENTATION = None
 EXPL_VARS = ["age", "clinical.T.Stage", "Clinical.N.Stage", "Clinical.M.Stage"]
 MAX_ITERATIONS = 10
 TOLERANCE = 1e-6
+
+RISK_SET_MIN_CHANGE = 1
+MAX_HELD_EVENT_FRACTION = None
+
+MINIMUM_EVENTS = 10
+MIN_ORGANIZATIONS = 1
+
+
+def ensure_spawned_by_central(client, method_name: str) -> None:
+    """Fail closed unless this call was dispatched by central() as a proper
+    vantage6 sub-task -- see the module docstring. MockAlgorithmClient
+    (this repo's own unit tests) is the only exemption."""
+    if isinstance(client, MockAlgorithmClient):
+        return
+    try:
+        payload = jwt.decode(client._access_token, options={"verify_signature": False})
+        task_id = payload["sub"]["task_id"]
+    except Exception as exc:
+        msg = f"{method_name}: could not verify task provenance (undecodable token); refusing to run."
+        error(msg)
+        raise RuntimeError(msg) from exc
+    try:
+        task = client.task.get(task_id)
+    except Exception as exc:
+        msg = f"{method_name}: could not verify task provenance (task lookup failed); refusing to run."
+        error(msg)
+        raise RuntimeError(msg) from exc
+    if not (task.get("parent") or task.get("parent_id")):
+        msg = (
+            f"{method_name}: this method must be dispatched by central() as a sub-task, "
+            f"not called directly -- doing so bypasses central()'s guards."
+        )
+        error(msg)
+        raise RuntimeError(msg)
 
 
 def _require_columns(df: pd.DataFrame, columns: list, method_name: str) -> None:
@@ -152,6 +242,49 @@ def _safe_inverse(matrix: np.ndarray) -> np.ndarray:
         return np.linalg.pinv(matrix)
 
 
+def apply_risk_set_jump_guard(
+    agg1: np.ndarray,
+    agg2: np.ndarray,
+    agg3: np.ndarray,
+    at_risk_counts: np.ndarray,
+    min_change: int,
+) -> tuple:
+    """Hold the previous released (agg1, agg2, agg3) snapshot at any time
+    index where fewer than `min_change` individuals have left the risk set
+    since the last released snapshot, instead of releasing the fresh one --
+    see the module docstring for why. `at_risk_counts` is the plain (not
+    exp-weighted) risk-set size at each time index, aggregated the same way
+    as `agg1`; it's what "how many individuals left" is computed from.
+    Applied once centrally on the already-summed-across-nodes arrays: the
+    leak targets the released aggregate, so guarding the aggregate directly
+    gives the same protection as guarding each node's own contribution
+    before summing, with one guard instead of coordinating N independent
+    per-node ones.
+
+    Returns (agg1, agg2, agg3, held_mask) where held_mask[i] is True if
+    index i's snapshot was held rather than freshly released.
+    """
+    n_times = len(at_risk_counts)
+    held_mask = np.zeros(n_times, dtype=bool)
+    if min_change <= 1 or n_times == 0:
+        return agg1, agg2, agg3, held_mask
+
+    agg1 = agg1.copy()
+    agg2 = agg2.copy()
+    agg3 = agg3.copy()
+    last_released_count = at_risk_counts[0]
+    for i in range(1, n_times):
+        departed = last_released_count - at_risk_counts[i]
+        if departed < min_change:
+            agg1[i] = agg1[i - 1]
+            agg2[i] = agg2[i - 1]
+            agg3[i] = agg3[i - 1]
+            held_mask[i] = True
+        else:
+            last_released_count = at_risk_counts[i]
+    return agg1, agg2, agg3, held_mask
+
+
 def compute_derivatives(
     summed_agg1: np.ndarray,
     summed_agg2: np.ndarray,
@@ -236,14 +369,37 @@ def central(
     organizations: list | None = None,
     max_iterations: int = MAX_ITERATIONS,
     tolerance: float = TOLERANCE,
+    risk_set_min_change: int = RISK_SET_MIN_CHANGE,
+    max_held_event_fraction: float | None = MAX_HELD_EVENT_FRACTION,
+    minimum_events: int = MINIMUM_EVENTS,
+    min_organizations: int = MIN_ORGANIZATIONS,
 ) -> dict:
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
     n_covs = len(expl_vars)
     max_iterations = max(1, int(max_iterations))
     tolerance = float(tolerance)
+    risk_set_min_change = int(risk_set_min_change)
+    if risk_set_min_change < 1:
+        return {"error": f"'risk_set_min_change' must be at least 1, got {risk_set_min_change}"}
+    if max_held_event_fraction is not None and not (0.0 <= max_held_event_fraction <= 1.0):
+        return {
+            "error": f"'max_held_event_fraction' must be between 0 and 1, got {max_held_event_fraction}"
+        }
+    min_organizations = int(min_organizations)
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
 
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     ids = [org["id"] for org in orgs]
+    org_name_by_id = {org["id"]: org["name"] for org in orgs}
+
+    if len(ids) < min_organizations:
+        return {
+            "error": (
+                f"Only {len(ids)} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     info("=" * 60)
     info("FEDERATED COX PROPORTIONAL HAZARDS REGRESSION")
@@ -263,6 +419,7 @@ def central(
                 "time_col": time_col,
                 "outcome_col": outcome_col,
                 "outcome_representation": outcome_representation,
+                "minimum_events": minimum_events,
             },
         },
         organizations=ids,
@@ -284,8 +441,16 @@ def central(
             unique_frames.append(pd.DataFrame.from_dict(times))
 
     ids = [org_id for org_id in ids if org_id not in excluded_ids]
-    if not ids:
-        return {"error": "No organizations met the minimum event threshold"}
+    if len(ids) < min_organizations:
+        excluded_names = [org_name_by_id.get(org_id, org_id) for org_id in excluded_ids]
+        return {
+            "error": (
+                f"Only {len(ids)} organization(s) have at least 'minimum_events'="
+                f"{minimum_events} events, but 'min_organizations' requires at least "
+                f"{min_organizations}. Organization(s) below the event threshold: "
+                f"{excluded_names}."
+            )
+        }
     if not unique_frames:
         return {"error": "No usable event-time data across any organization"}
 
@@ -313,8 +478,23 @@ def central(
     z_results = client.wait_for_results(z_task["id"])
 
     z_sum = pd.Series(0.0, index=expl_vars)
+    z_sum_squares = pd.Series(0.0, index=expl_vars)
+    z_count = pd.Series(0.0, index=expl_vars)
     for output in z_results:
         z_sum += pd.Series(output["sum"], index=expl_vars, dtype=float).fillna(0.0)
+        z_sum_squares += pd.Series(output["sum_squares"], index=expl_vars, dtype=float).fillna(0.0)
+        z_count += pd.Series(output["count"], index=expl_vars, dtype=float).fillna(0.0)
+
+    # Pooled per-covariate mean/variance over event-case rows -- see the
+    # module docstring. A covariate with no non-null event-case value (or
+    # zero variance among them) keeps centre=0/scale=1, i.e. unstandardized.
+    safe_count = z_count.where(z_count > 0, np.nan)
+    centre = (z_sum / safe_count).fillna(0.0)
+    variance = (z_sum_squares / safe_count - centre**2).fillna(0.0).clip(lower=0.0)
+    scale = np.sqrt(variance).where(lambda s: s > 1e-8, 1.0)
+    centre_vec = centre.reindex(expl_vars).to_numpy(dtype=float)
+    scale_vec = scale.reindex(expl_vars).to_numpy(dtype=float)
+    z_sum_std = (z_sum - z_count * centre) / scale
 
     # ── Phase 3: Newton-Raphson iterations ───────────────────────────────────
     info("")
@@ -332,6 +512,8 @@ def central(
                     "expl_vars": expl_vars,
                     "beta": beta.tolist(),
                     "unique_time_events": unique_time_events,
+                    "centre": centre_vec.tolist(),
+                    "scale": scale_vec.tolist(),
                 },
             },
             organizations=ids,
@@ -344,19 +526,38 @@ def central(
         summed_agg1 = np.zeros(n_times, dtype=float)
         summed_agg2 = np.zeros((n_times, n_covs), dtype=float)
         summed_agg3 = np.zeros((n_times, n_covs, n_covs), dtype=float)
+        summed_at_risk_counts = np.zeros(n_times, dtype=float)
 
         for output in results:
             summed_agg1 += np.asarray(output["agg1"], dtype=float)
             agg2_df = pd.DataFrame.from_dict(output["agg2"]).reindex(columns=expl_vars)
             summed_agg2 += agg2_df.to_numpy(dtype=float)
             summed_agg3 += np.asarray(output["agg3"], dtype=float)
+            summed_at_risk_counts += np.asarray(output["at_risk_counts"], dtype=float)
+
+        summed_agg1, summed_agg2, summed_agg3, held_mask = apply_risk_set_jump_guard(
+            summed_agg1, summed_agg2, summed_agg3, summed_at_risk_counts, risk_set_min_change
+        )
+        if max_held_event_fraction is not None and held_mask.any():
+            held_fraction = float(aggregated_time_events.loc[held_mask, "freq"].sum()) / float(
+                aggregated_time_events["freq"].sum()
+            )
+            if held_fraction > max_held_event_fraction:
+                return {
+                    "error": (
+                        f"{held_fraction:.1%} of events were scored against a risk-set "
+                        f"snapshot held by the 'risk_set_min_change' guard, exceeding "
+                        f"'max_held_event_fraction'={max_held_event_fraction:.1%}. Lower "
+                        f"'risk_set_min_change' or raise 'max_held_event_fraction' to proceed."
+                    )
+                }
 
         primary_derivative, secondary_derivative = compute_derivatives(
             summed_agg1=summed_agg1,
             summed_agg2=summed_agg2,
             summed_agg3=summed_agg3,
             aggregated_time_events=aggregated_time_events,
-            z_sum=z_sum,
+            z_sum=z_sum_std,
         )
 
         beta_old = beta.copy()
@@ -376,16 +577,14 @@ def central(
             break
 
     # ── Phase 4: inference ───────────────────────────────────────────────────
-    fisher = _safe_inverse(-secondary_derivative)
-    s_errors = np.sqrt(np.clip(np.diag(fisher), a_min=0.0, a_max=None))
-
-    information = -secondary_derivative
-    wald_statistic = float(beta @ information @ beta)
-    overall_p_value = float(chi2.sf(wald_statistic, len(beta)))
-
+    # The log-likelihood is invariant to the standardizing affine transform
+    # (see module docstring), so it must be computed from the standardized
+    # beta/z_sum/summed_agg1 that are actually consistent with each other --
+    # not from the back-transformed beta below, which has no matching
+    # standardized-space summed_agg1 of its own.
     try:
         log_likelihood = _compute_log_likelihood(
-            z_sum=z_sum,
+            z_sum=z_sum_std,
             beta=beta,
             summed_agg1=summed_agg1,
             aggregated_time_events=aggregated_time_events,
@@ -396,6 +595,21 @@ def central(
     except (ValueError, FloatingPointError) as exc:
         warn(f"Could not compute AIC due to numerical/data issue: {exc}")
         aic = float("nan")
+
+    # Back-transform beta/Hessian/covariance from standardized to original
+    # covariate units: beta_x = beta_std / scale, information_x = information_std
+    # * outer(scale, scale), covariance_x = covariance_std / outer(scale, scale)
+    # -- see the module docstring for the derivation.
+    scale_outer = np.outer(scale_vec, scale_vec)
+    information_std = -secondary_derivative
+    fisher_std = _safe_inverse(information_std)
+    beta = beta / scale_vec
+    fisher = fisher_std / scale_outer
+    information = information_std * scale_outer
+    s_errors = np.sqrt(np.clip(np.diag(fisher), a_min=0.0, a_max=None))
+
+    wald_statistic = float(beta @ information @ beta)
+    overall_p_value = float(chi2.sf(wald_statistic, len(beta)))
 
     results = _build_results_table(beta=beta, s_errors=s_errors, expl_vars=expl_vars)
 
@@ -418,7 +632,7 @@ def central(
         "model": results.to_json(),
         "overall_p_value": overall_p_value,
         "aic": aic,
-        "degrees_of_freedom": int(len(beta)),
+        "degrees_of_freedom": len(beta),
         "warnings": model_warnings,
     }
 
@@ -431,8 +645,9 @@ def get_unique_event_times(
     time_col: str = TIME_COL,
     outcome_col: str = OUTCOME_COL,
     outcome_representation: dict = OUTCOME_REPRESENTATION,
-    minimum_events: int = 10,
+    minimum_events: int = MINIMUM_EVENTS,
 ) -> dict:
+    ensure_spawned_by_central(client, "get_unique_event_times")
     _require_columns(df, [time_col, outcome_col], "get_unique_event_times")
     df = df.assign(**{outcome_col: _derive_binary(df[outcome_col], outcome_representation, outcome_col)})
     info("Computing unique event times")
@@ -450,35 +665,57 @@ def get_unique_event_times(
 
 
 @data(1)
+@algorithm_client
 def compute_summed_z(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     outcome_col: str = OUTCOME_COL,
     outcome_representation: dict = OUTCOME_REPRESENTATION,
     expl_vars: list = None,
 ) -> dict:
+    ensure_spawned_by_central(client, "compute_summed_z")
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
     _require_columns(df, [outcome_col, *expl_vars], "compute_summed_z")
     df = df.assign(**{outcome_col: _derive_binary(df[outcome_col], outcome_representation, outcome_col)})
     info("Computing summed z statistics")
-    z_sum = df[df[outcome_col] == 1][expl_vars].sum().astype(float).to_dict()
-    return {"sum": z_sum}
+    # sum_squares/count (per covariate, NaNs skipped independently per column
+    # like sum already is) let central() derive a pooled mean/variance per
+    # covariate for standardization, without assuming every covariate has the
+    # same missingness pattern among event rows.
+    event_rows = df[df[outcome_col] == 1][expl_vars].astype(float)
+    z_sum = event_rows.sum(skipna=True).to_dict()
+    z_sum_squares = (event_rows**2).sum(skipna=True).to_dict()
+    z_count = event_rows.notna().sum().astype(float).to_dict()
+    return {"sum": z_sum, "sum_squares": z_sum_squares, "count": z_count}
 
 
 @data(1)
+@algorithm_client
 def perform_iteration(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     time_col: str = TIME_COL,
     expl_vars: list = None,
     beta: list = None,
     unique_time_events: list = None,
+    centre: list = None,
+    scale: list = None,
 ) -> dict:
+    ensure_spawned_by_central(client, "perform_iteration")
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
     _require_columns(df, [time_col, *expl_vars], "perform_iteration")
+    if (centre is None) != (scale is None):
+        raise ValueError("'centre' and 'scale' must both be given, or both omitted")
     beta_arr = np.asarray(beta, dtype=float)
     info("Computing aggregates for the derivation of the partial likelihood")
 
     working = df[[time_col, *expl_vars]].dropna(how="any")
     X = working[expl_vars].to_numpy(dtype=float)
+    if centre is not None:
+        # Standardized space: beta (and therefore the aggregates below) are
+        # in standardized units until central() back-transforms the final
+        # result -- see the module docstring.
+        X = (X - np.asarray(centre, dtype=float)) / np.asarray(scale, dtype=float)
     times = working[time_col].to_numpy(dtype=float)
 
     if X.shape[0] == 0:
@@ -487,16 +724,19 @@ def perform_iteration(
             "agg1": [0.0] * len(unique_time_events),
             "agg2": pd.DataFrame(zeros, columns=expl_vars).to_dict(),
             "agg3": [np.zeros((len(expl_vars), len(expl_vars))).tolist() for _ in unique_time_events],
+            "at_risk_counts": [0] * len(unique_time_events),
         }
 
     exp_xb = np.exp(X @ beta_arr)
     agg1 = []
     agg2_rows = []
     agg3 = []
+    at_risk_counts = []
     n_covariates = len(expl_vars)
 
     for unique_time in unique_time_events:
         mask = times >= float(unique_time)
+        at_risk_counts.append(int(mask.sum()))
         if not np.any(mask):
             agg1.append(0.0)
             agg2_rows.append(np.zeros(n_covariates, dtype=float))
@@ -516,4 +756,8 @@ def perform_iteration(
         "agg1": agg1,
         "agg2": agg2_df.to_dict(),
         "agg3": [matrix.tolist() for matrix in agg3],
+        # Plain (not exp-weighted) risk-set size at each time -- used only by
+        # central()'s risk-set jump guard to decide how many individuals left
+        # the risk set between releases; see the module docstring.
+        "at_risk_counts": at_risk_counts,
     }
