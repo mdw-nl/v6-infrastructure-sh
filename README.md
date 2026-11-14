@@ -180,6 +180,7 @@ Available algorithms:
 | Folder | Description |
 |---|---|
 | `average/` | Federated average of a single column |
+| `linear_regression/` | Federated multiple linear regression (ordinary least squares) via a single round of federated normal equations — the exact pooled-data fit, no iteration needed |
 | `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
 | `kaplan_meier/` | Federated Kaplan-Meier survival curve with 95% CI, a matplotlib plot, and optional Gaussian/Poisson noise injection on event times for privacy |
 | `coxph/` | Federated Cox proportional hazards regression (hazard ratios across covariates) via federated Newton-Raphson iterations |
