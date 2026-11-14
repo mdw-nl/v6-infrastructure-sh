@@ -8,7 +8,11 @@ representation layer here: there's no single canonical way to "derive" a
 continuous value the way there is for a binary flag (presence/equals/isin),
 so the column must already contain the real-valued outcome. A missing
 column, or a column that isn't numeric after coercion, raises a clear
-ValueError.
+ValueError. A duplicate name within `predictor_cols`, or `outcome_col`
+also appearing in `predictor_cols`, raises a clear ValueError too --
+rather than silently building a design matrix with more columns than
+`predictor_cols` has entries, which is what a duplicate label otherwise
+does once it goes through pandas' column selection.
 
 Unlike every other regression algorithm in this repo (logistic_regression.py's
 FedAvg rounds, admm_logistic_regression.py's ADMM consensus rounds,
@@ -222,6 +226,19 @@ def central(
 ) -> dict:
     predictor_cols = list(predictor_cols) if predictor_cols else list(PREDICTOR_COLS)
     n_params = len(predictor_cols) + 1  # +1 for the intercept
+
+    if len(set(predictor_cols)) != len(predictor_cols):
+        # pandas silently multiplies columns out (not just duplicates them)
+        # when a frame that already has a repeated label is indexed with
+        # that same label again, so a duplicate name here would otherwise
+        # surface many steps later as a confusing dimension/rank mismatch
+        # instead of a clear error naming the actual mistake.
+        duplicates = sorted({c for c in predictor_cols if predictor_cols.count(c) > 1})
+        return {"error": f"'predictor_cols' contains duplicate column name(s): {duplicates}"}
+    if outcome_col in predictor_cols:
+        return {
+            "error": f"'outcome_col' ({outcome_col!r}) must not also appear in 'predictor_cols'"
+        }
 
     min_organizations = int(min_organizations)
     if min_organizations < 1:

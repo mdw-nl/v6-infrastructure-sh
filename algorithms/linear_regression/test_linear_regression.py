@@ -143,3 +143,22 @@ def test_require_columns_rejects_missing_column() -> None:
     df = pd.DataFrame({"a": [1, 2]})
     with pytest.raises(ValueError, match="not found in dataset"):
         _require_columns(df, ["a", "b"], "compute_local_sums")
+
+
+def test_duplicate_predictor_cols_returns_a_clear_error() -> None:
+    # A duplicate name here is not the same thing as two distinct but
+    # collinear columns (see the collinearity test above) -- it's caught
+    # separately, before it can reach pandas' column-selection quirk where
+    # indexing an already-duplicated label multiplies columns out instead
+    # of just repeating them.
+    df = _linear_df(50, seed=9)
+    result = _run_central([df], predictor_cols=["x1", "x1"], outcome_col="y")
+    assert "error" in result
+    assert "duplicate column name" in result["error"]
+
+
+def test_outcome_col_in_predictor_cols_returns_a_clear_error() -> None:
+    df = _linear_df(50, seed=10)
+    result = _run_central([df], predictor_cols=["x1", "y"], outcome_col="y")
+    assert "error" in result
+    assert "must not also appear" in result["error"]

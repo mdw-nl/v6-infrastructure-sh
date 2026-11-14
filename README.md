@@ -181,6 +181,7 @@ Available algorithms:
 |---|---|
 | `average/` | Federated average of a single column |
 | `linear_regression/` | Federated multiple linear regression (ordinary least squares) via a single round of federated normal equations — the exact pooled-data fit, no iteration needed |
+| `poisson_regression/` | Federated Poisson regression (count outcomes) via iteratively reweighted least squares — reports rate ratios, deviance, AIC, and an overdispersion diagnostic |
 | `logistic_regression/` | Federated logistic regression with normalization, batch training, and per-node evaluation |
 | `kaplan_meier/` | Federated Kaplan-Meier survival curve with 95% CI, a matplotlib plot, and optional Gaussian/Poisson noise injection on event times for privacy |
 | `coxph/` | Federated Cox proportional hazards regression (hazard ratios across covariates) via federated Newton-Raphson iterations |
