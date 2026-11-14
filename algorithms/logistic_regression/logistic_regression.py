@@ -39,6 +39,15 @@ enough data. Like `organizations`, these are requester-supplied kwargs (set
 in run_study.py), not a node-enforced policy: they catch misconfiguration
 (an accidentally tiny test file, a near-empty node), not a requester
 actively trying to bypass them.
+
+`central()` also takes `max_pct_vars_vs_obs` (default None, i.e. no
+restriction): if set, `central()` errors out after phase 1 instead of
+training when `feature_cols` is more than this percentage of total
+training rows (e.g. 10 means at least 10 rows per feature are required).
+This is a basic overfitting/memorization guard -- too few rows per feature
+risks a model that reproduces individual records rather than learning a
+general pattern. Like `min_organizations`/`min_rows`, it's a
+requester-supplied kwarg, not a node-enforced policy.
 """
 
 import time
@@ -62,6 +71,7 @@ RANDOM_SEED = 42
 
 MIN_ORGANIZATIONS = 1
 MIN_ROWS = 0
+MAX_PCT_VARS_VS_OBS = None
 
 
 class LogisticRegressionModel(nn.Module):
@@ -196,6 +206,7 @@ def central(
     seed: int = RANDOM_SEED,
     min_organizations: int = MIN_ORGANIZATIONS,
     min_rows: int = MIN_ROWS,
+    max_pct_vars_vs_obs: float | None = MAX_PCT_VARS_VS_OBS,
 ) -> dict:
     t_total = time.time()
     min_organizations = int(min_organizations)
@@ -203,6 +214,10 @@ def central(
         return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
     if min_rows < 0:
         return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
+    if max_pct_vars_vs_obs is not None and max_pct_vars_vs_obs <= 0:
+        return {
+            "error": f"'max_pct_vars_vs_obs' must be positive if set, got {max_pct_vars_vs_obs}"
+        }
 
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
@@ -275,6 +290,19 @@ def central(
     info(f"Received {len(stats_results)} result(s) — total training rows: {total_n}")
     if total_n == 0:
         return {"error": "No usable data across any organization"}
+
+    if max_pct_vars_vs_obs is not None:
+        pct_vars_vs_obs = n_features * 100 / total_n
+        if pct_vars_vs_obs > max_pct_vars_vs_obs:
+            return {
+                "error": (
+                    f"Number of features ({n_features}) is {pct_vars_vs_obs:.1f}% of "
+                    f"total training rows ({total_n}), which exceeds "
+                    f"'max_pct_vars_vs_obs'={max_pct_vars_vs_obs}%. Refusing to train, "
+                    "as this risks a model that memorizes individual records instead "
+                    "of learning a general pattern."
+                )
+            }
 
     global_sum = np.array([r["sum"] for r in qualifying]).sum(axis=0)
     global_sum_sq = np.array([r["sum_sq"] for r in qualifying]).sum(axis=0)

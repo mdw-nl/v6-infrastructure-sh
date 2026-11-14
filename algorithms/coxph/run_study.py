@@ -48,6 +48,13 @@ MIN_ORGANIZATIONS = 1
 RISK_SET_MIN_CHANGE = 1
 MAX_HELD_EVENT_FRACTION = None
 
+# Overfitting guard: errors out instead of fitting if EXPL_VARS is more than
+# this percentage of total events across all qualifying nodes (e.g. 10 means
+# at least 10 events per covariate required -- the standard Cox
+# events-per-variable heuristic). None (the default) disables the check --
+# same requester-side tier as the guards above.
+MAX_PCT_VARS_VS_OBS = None
+
 
 def print_model_table(model_json: str) -> None:
     rows = json.loads(model_json)
@@ -106,6 +113,7 @@ def main() -> None:
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Min organizations: {MIN_ORGANIZATIONS}  (minimum events per org: {MINIMUM_EVENTS})")
     print(f"Risk-set min change: {RISK_SET_MIN_CHANGE}  (max held event fraction: {MAX_HELD_EVENT_FRACTION})")
+    print(f"Max pct vars vs obs: {MAX_PCT_VARS_VS_OBS}")
     print()
 
     task = client.task.create(
@@ -128,6 +136,7 @@ def main() -> None:
                 "min_organizations": MIN_ORGANIZATIONS,
                 "risk_set_min_change": RISK_SET_MIN_CHANGE,
                 "max_held_event_fraction": MAX_HELD_EVENT_FRACTION,
+                "max_pct_vars_vs_obs": MAX_PCT_VARS_VS_OBS,
             },
         },
         databases=[{"label": "default"}],

@@ -71,6 +71,18 @@ instead of silently returning a degraded fit. Like `minimum_events`/
 `min_organizations` above, these are requester-supplied kwargs (set in
 run_study.py), not a node-enforced policy.
 
+`central()` also takes `max_pct_vars_vs_obs` (default None, i.e. no
+restriction). If set, `central()` errors out after phase 1 (once the total
+number of qualifying events across all nodes is known) instead of fitting
+when `expl_vars` is more than this percentage of that total event count
+(e.g. 10 means at least 10 events per covariate are required). This uses
+events, not total rows, as the denominator -- Cox partial-likelihood
+degrees of freedom are bounded by the number of events, not the number of
+observations, so events-per-covariate is the standard overfitting
+heuristic for this model, not just a generic rows-vs-variables ratio. Like
+`minimum_events`/`min_organizations` above, it's a requester-supplied
+kwarg, not a node-enforced policy.
+
 Every node-side method (`get_unique_event_times`, `compute_summed_z`,
 `perform_iteration`) also verifies it was dispatched by `central()` as a
 proper vantage6 sub-task, not called directly -- which would bypass every
@@ -107,6 +119,7 @@ MAX_HELD_EVENT_FRACTION = None
 
 MINIMUM_EVENTS = 10
 MIN_ORGANIZATIONS = 1
+MAX_PCT_VARS_VS_OBS = None
 
 
 def ensure_spawned_by_central(client, method_name: str) -> None:
@@ -373,6 +386,7 @@ def central(
     max_held_event_fraction: float | None = MAX_HELD_EVENT_FRACTION,
     minimum_events: int = MINIMUM_EVENTS,
     min_organizations: int = MIN_ORGANIZATIONS,
+    max_pct_vars_vs_obs: float | None = MAX_PCT_VARS_VS_OBS,
 ) -> dict:
     expl_vars = list(expl_vars) if expl_vars else list(EXPL_VARS)
     n_covs = len(expl_vars)
@@ -388,6 +402,10 @@ def central(
     min_organizations = int(min_organizations)
     if min_organizations < 1:
         return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    if max_pct_vars_vs_obs is not None and max_pct_vars_vs_obs <= 0:
+        return {
+            "error": f"'max_pct_vars_vs_obs' must be positive if set, got {max_pct_vars_vs_obs}"
+        }
 
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     ids = [org["id"] for org in orgs]
@@ -458,6 +476,20 @@ def central(
     unique_time_events = aggregated_time_events[time_col].tolist()
     info(f"Included organizations: {ids} (excluded: {excluded_ids})")
     info(f"Unique event times    : {len(unique_time_events)}")
+
+    if max_pct_vars_vs_obs is not None:
+        total_events = float(aggregated_time_events["freq"].sum())
+        pct_vars_vs_obs = n_covs * 100 / total_events if total_events else float("inf")
+        if pct_vars_vs_obs > max_pct_vars_vs_obs:
+            return {
+                "error": (
+                    f"Number of covariates ({n_covs}) is {pct_vars_vs_obs:.1f}% of "
+                    f"total events ({total_events:.0f}), which exceeds "
+                    f"'max_pct_vars_vs_obs'={max_pct_vars_vs_obs}%. Refusing to fit, "
+                    "as too few events per covariate risks a model that memorizes "
+                    "individual records instead of learning a general pattern."
+                )
+            }
 
     # ── Phase 2: summed Z statistic ─────────────────────────────────────────
     info("")

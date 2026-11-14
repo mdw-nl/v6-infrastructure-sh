@@ -51,6 +51,12 @@ REL_TOL = 1e-3
 MIN_ORGANIZATIONS = 1
 MIN_ROWS = 0
 
+# Overfitting/memorization guard: errors out instead of running ADMM if
+# feature_cols is more than this percentage of total training rows (e.g. 10
+# means at least 10 rows per feature required). None (the default) disables
+# the check -- same requester-side tier as the guards above.
+MAX_PCT_VARS_VS_OBS = None
+
 
 def main() -> None:
     client = Client(SERVER_URL, SERVER_PORT, API_PATH)
@@ -89,6 +95,7 @@ def main() -> None:
     print(f"num_rounds={NUM_ROUNDS}  rho={RHO}  alpha={ALPHA}  lambda_={LAMBDA_}")
     print(f"abs_tol={ABS_TOL}  rel_tol={REL_TOL}  train_ratio={TRAIN_RATIO}  seed={RANDOM_SEED}")
     print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
+    print(f"Max pct vars vs obs: {MAX_PCT_VARS_VS_OBS}")
     print()
 
     task = client.task.create(
@@ -114,6 +121,7 @@ def main() -> None:
                 "seed": RANDOM_SEED,
                 "min_organizations": MIN_ORGANIZATIONS,
                 "min_rows": MIN_ROWS,
+                "max_pct_vars_vs_obs": MAX_PCT_VARS_VS_OBS,
             },
         },
         databases=[{"label": "default"}],
