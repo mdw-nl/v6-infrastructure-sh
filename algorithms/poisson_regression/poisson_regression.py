@@ -91,6 +91,29 @@ fitting when the number of parameters (predictors plus the intercept) is
 more than this percentage of total usable rows, checked against the row
 total after `min_rows` exclusion has already dropped under-qualified
 organizations.
+
+`central()` also takes `exposure_col` (default None, i.e. no offset):
+a numeric, strictly positive column (e.g. person-years of follow-up,
+population size) representing how much opportunity each row had to
+accumulate `outcome_col` events. When set, the model becomes
+`log(mu) = log(exposure) + X @ beta` instead of `log(mu) = X @ beta` --
+`log(exposure)` enters the linear predictor with a fixed coefficient of
+1, not a coefficient `central()` fits, which is what makes it an offset
+rather than another predictor. This turns the model from predicting raw
+counts into predicting a *rate* (events per unit of exposure): two rows
+with identical `predictor_cols` but different exposure are now expected
+to produce proportionally different counts, rather than the same count.
+Every per-round working-response/weight calculation accounts for the
+offset (see `compute_local_glm_sums`), and the null-model deviance and
+starting intercept are both derived from the exposure-weighted rate
+`sum(y) / sum(exposure)` rather than the plain mean of `y` -- when
+`exposure_col` is left at its default, `exposure` is implicitly 1 for
+every row, `log(exposure) = 0`, and both of those reduce exactly to the
+no-offset formulas above (this is a strict extension, not a separate code
+path). A non-positive exposure value raises a clear ValueError, since
+`log(exposure)` would otherwise be undefined or `-inf`; a zero-exposure
+row (someone with no opportunity to have an event) should be excluded by
+the caller before running, not passed in.
 """
 
 import math
@@ -106,6 +129,7 @@ from vantage6.algorithm.tools.util import error, info, warn
 
 PREDICTOR_COLS = ["age", "clinical.T.Stage", "Clinical.M.Stage"]
 OUTCOME_COL = "Clinical.N.Stage"
+EXPOSURE_COL = None
 
 MAX_ITERATIONS = 25
 TOLERANCE = 1e-8
@@ -168,17 +192,26 @@ def _safe_inverse(matrix: np.ndarray) -> np.ndarray:
         return np.linalg.pinv(matrix)
 
 
-def _clean_and_validate(df: pd.DataFrame, predictor_cols: list, outcome_col: str, method_name: str) -> pd.DataFrame:
-    """Coerce predictor_cols + outcome_col to numeric, drop unusable rows, and
-    confirm outcome_col is a non-negative, (effectively) integer count column
-    -- shared by every phase so the usable row set is identical across all of
-    them."""
-    _require_columns(df, [*predictor_cols, outcome_col], method_name)
-    numeric_cols = [*predictor_cols, outcome_col]
+def _clean_and_validate(
+    df: pd.DataFrame,
+    predictor_cols: list,
+    outcome_col: str,
+    method_name: str,
+    exposure_col: str | None = None,
+) -> pd.DataFrame:
+    """Coerce predictor_cols + outcome_col (+ exposure_col, if given) to
+    numeric, drop unusable rows, and confirm outcome_col is a non-negative,
+    (effectively) integer count column and exposure_col (if given) is
+    strictly positive -- shared by every phase so the usable row set is
+    identical across all of them."""
+    columns_needed = [*predictor_cols, outcome_col]
+    if exposure_col is not None:
+        columns_needed = [*columns_needed, exposure_col]
+    _require_columns(df, columns_needed, method_name)
     try:
-        numeric_df = df[numeric_cols].apply(pd.to_numeric, errors="raise")
+        numeric_df = df[columns_needed].apply(pd.to_numeric, errors="raise")
     except (ValueError, TypeError) as exc:
-        msg = f"{method_name}: column(s) {numeric_cols} must all be numeric ({exc})"
+        msg = f"{method_name}: column(s) {columns_needed} must all be numeric ({exc})"
         error(msg)
         raise ValueError(msg) from exc
 
@@ -195,6 +228,15 @@ def _clean_and_validate(df: pd.DataFrame, predictor_cols: list, outcome_col: str
         msg = (
             f"{method_name}: outcome_col {outcome_col!r} contains non-integer value(s); "
             "Poisson regression models count data, which must be whole numbers"
+        )
+        error(msg)
+        raise ValueError(msg)
+    if exposure_col is not None and (clean[exposure_col] <= 0).any():
+        msg = (
+            f"{method_name}: exposure_col {exposure_col!r} contains non-positive value(s); "
+            "exposure must be strictly positive (it's used as log(exposure) in the "
+            "offset). Exclude zero-exposure rows before running, rather than passing "
+            "them in."
         )
         error(msg)
         raise ValueError(msg)
@@ -233,10 +275,15 @@ def compute_local_row_stats(
     df: pd.DataFrame,
     predictor_cols: list,
     outcome_col: str,
+    exposure_col: str | None = None,
 ) -> dict:
     """Usable row count plus fixed, beta-independent sums needed for the
     null-model deviance and saturated log-likelihood -- see the module
-    docstring. organization_id is reported so central() can tell which
+    docstring. `exposure_sum`/`y_log_exposure_sum` are the offset-aware
+    additions: with no exposure_col, exposure is implicitly 1 for every row
+    (log(exposure) = 0), so exposure_sum reduces to n and
+    y_log_exposure_sum reduces to 0, matching the no-offset formulas
+    exactly. organization_id is reported so central() can tell which
     organization a given row count belongs to, to drop one below min_rows
     from the fit entirely, not just hide it from a count."""
     empty = {
@@ -244,9 +291,11 @@ def compute_local_row_stats(
         "y_sum": 0.0,
         "y_log_y_sum": 0.0,
         "log_factorial_sum": 0.0,
+        "exposure_sum": 0.0,
+        "y_log_exposure_sum": 0.0,
         "organization_id": client.organization_id,
     }
-    clean = _clean_and_validate(df, predictor_cols, outcome_col, "compute_local_row_stats")
+    clean = _clean_and_validate(df, predictor_cols, outcome_col, "compute_local_row_stats", exposure_col)
     info(f"Dataset: {len(df)} total rows, {len(clean)} usable rows after dropna")
     if len(clean) == 0:
         return empty
@@ -255,11 +304,19 @@ def compute_local_row_stats(
     with np.errstate(divide="ignore", invalid="ignore"):
         y_log_y = np.where(y > 0, y * np.log(y), 0.0)
 
+    if exposure_col is not None:
+        exposure = clean[exposure_col].to_numpy(dtype=float)
+    else:
+        exposure = np.ones(len(clean), dtype=float)
+    log_exposure = np.log(exposure)
+
     return {
         "n": len(clean),
         "y_sum": float(y.sum()),
         "y_log_y_sum": float(y_log_y.sum()),
         "log_factorial_sum": float(gammaln(y + 1).sum()),
+        "exposure_sum": float(exposure.sum()),
+        "y_log_exposure_sum": float((y * log_exposure).sum()),
         "organization_id": client.organization_id,
     }
 
@@ -272,12 +329,18 @@ def compute_local_glm_sums(
     predictor_cols: list,
     outcome_col: str,
     beta: list,
+    exposure_col: str | None = None,
 ) -> dict:
     """One IRLS round's weighted design-matrix sums for one node, given the
-    current global beta. Also returns this round's deviance and Pearson
-    residual sum of squares -- cheap to compute alongside X'WX/X'Wz, and
-    central() only keeps the final round's values once IRLS has converged."""
-    clean = _clean_and_validate(df, predictor_cols, outcome_col, "compute_local_glm_sums")
+    current global beta. With exposure_col set, eta includes the fixed
+    offset log(exposure) before the weight/working-response calculations,
+    and the offset's (fixed, non-fitted) contribution is subtracted back
+    out of the working response before it's regressed against X -- X'WX/
+    X'Wz describe beta's contribution only, never the offset's. Also
+    returns this round's deviance and Pearson residual sum of squares --
+    cheap to compute alongside X'WX/X'Wz, and central() only keeps the
+    final round's values once IRLS has converged."""
+    clean = _clean_and_validate(df, predictor_cols, outcome_col, "compute_local_glm_sums", exposure_col)
     n_params = len(predictor_cols) + 1
     empty = {
         "n": 0,
@@ -293,16 +356,23 @@ def compute_local_glm_sums(
     X = np.column_stack([np.ones(len(clean)), clean[predictor_cols].to_numpy(dtype=float)])
     y = clean[outcome_col].to_numpy(dtype=float)
 
+    if exposure_col is not None:
+        exposure = clean[exposure_col].to_numpy(dtype=float)
+    else:
+        exposure = np.ones(len(clean), dtype=float)
+    offset = np.log(exposure)
+
     beta_arr = np.array(beta, dtype=float)
-    eta = np.clip(X @ beta_arr, -ETA_CLIP, ETA_CLIP)
+    eta = np.clip(offset + X @ beta_arr, -ETA_CLIP, ETA_CLIP)
     mu = np.exp(eta)
     mu_safe = np.clip(mu, 1e-10, None)
 
     W = mu_safe
     z = eta + (y - mu_safe) / mu_safe
+    z_adjusted = z - offset  # offset's contribution is fixed, not fitted -- regress only on X
 
     XtWX = (X * W[:, None]).T @ X
-    XtWz = (X * W[:, None]).T @ z
+    XtWz = (X * W[:, None]).T @ z_adjusted
 
     with np.errstate(divide="ignore", invalid="ignore"):
         y_log_ratio = np.where(y > 0, y * np.log(y / mu_safe), 0.0)
@@ -324,6 +394,7 @@ def central(
     client: AlgorithmClient,
     predictor_cols: list = None,
     outcome_col: str = OUTCOME_COL,
+    exposure_col: str | None = EXPOSURE_COL,
     organizations: list | None = None,
     max_iterations: int = MAX_ITERATIONS,
     tolerance: float = TOLERANCE,
@@ -348,6 +419,13 @@ def central(
         return {
             "error": f"'outcome_col' ({outcome_col!r}) must not also appear in 'predictor_cols'"
         }
+    if exposure_col is not None:
+        if exposure_col in predictor_cols:
+            return {
+                "error": f"'exposure_col' ({exposure_col!r}) must not also appear in 'predictor_cols'"
+            }
+        if exposure_col == outcome_col:
+            return {"error": f"'exposure_col' must not be the same column as 'outcome_col' ({outcome_col!r})"}
 
     min_organizations = int(min_organizations)
     if min_organizations < 1:
@@ -377,6 +455,7 @@ def central(
     info(f"Organizations : {[org['name'] for org in orgs]}")
     info(f"Predictors    : {predictor_cols}")
     info(f"Outcome       : {outcome_col}")
+    info(f"Exposure      : {exposure_col if exposure_col else 'none (modeling raw counts)'}")
 
     # ── Phase 1: local row stats ─────────────────────────────────────────────
     info("")
@@ -384,7 +463,11 @@ def central(
     task = client.task.create(
         input_={
             "method": "compute_local_row_stats",
-            "kwargs": {"predictor_cols": predictor_cols, "outcome_col": outcome_col},
+            "kwargs": {
+                "predictor_cols": predictor_cols,
+                "outcome_col": outcome_col,
+                "exposure_col": exposure_col,
+            },
         },
         organizations=org_ids,
         name="poisson_row_stats",
@@ -443,20 +526,30 @@ def central(
     y_sum_total = sum(r["y_sum"] for r in qualifying)
     y_log_y_sum_total = sum(r["y_log_y_sum"] for r in qualifying)
     log_factorial_sum_total = sum(r["log_factorial_sum"] for r in qualifying)
+    exposure_sum_total = sum(r["exposure_sum"] for r in qualifying)
+    y_log_exposure_sum_total = sum(r["y_log_exposure_sum"] for r in qualifying)
 
-    global_mean_y = y_sum_total / total_n
-    # The Poisson intercept-only MLE is exactly log(mean(y)), so the null
-    # model's deviance is available in closed form -- no iteration needed
-    # for it. See the module docstring for the derivation.
-    safe_mean_y = max(global_mean_y, 1e-6)
-    deviance_null = 2.0 * (y_log_y_sum_total - y_sum_total * math.log(safe_mean_y))
+    # With no exposure_col, exposure_sum_total == total_n and
+    # y_log_exposure_sum_total == 0 (see compute_local_row_stats), so
+    # global_rate reduces exactly to mean(y) and the two lines below
+    # reduce exactly to the no-offset formulas -- this is one derivation,
+    # not a separate offset-vs-no-offset code path. The intercept-only
+    # (plus fixed offset) Poisson MLE is exactly log(sum(y)/sum(exposure)),
+    # so the null model's deviance is available in closed form -- no
+    # iteration needed for it. See the module docstring for the full
+    # derivation.
+    global_rate = y_sum_total / exposure_sum_total
+    safe_rate = max(global_rate, 1e-6)
+    deviance_null = 2.0 * (
+        y_log_y_sum_total - y_log_exposure_sum_total - y_sum_total * math.log(safe_rate)
+    )
     saturated_loglik = y_log_y_sum_total - y_sum_total - log_factorial_sum_total
 
     # ── Phase 2: IRLS iterations ─────────────────────────────────────────────
     info("")
     info("── PHASE 2: IRLS iterations ──────────────────────────────────")
     beta = np.zeros(n_params, dtype=float)
-    beta[0] = math.log(safe_mean_y)
+    beta[0] = math.log(safe_rate)
 
     deviance_final = deviance_null
     pearson_ssq_final = 0.0
@@ -470,6 +563,7 @@ def central(
                     "predictor_cols": predictor_cols,
                     "outcome_col": outcome_col,
                     "beta": beta.tolist(),
+                    "exposure_col": exposure_col,
                 },
             },
             organizations=org_ids,

@@ -20,6 +20,15 @@ INITIATING_ORG = "alpha"
 # study.
 PREDICTOR_COLS = ["age", "clinical.T.Stage", "Clinical.M.Stage"]
 OUTCOME_COL = "Clinical.N.Stage"
+# Optional offset: a numeric, strictly positive column representing how
+# much opportunity each row had to accumulate OUTCOME_COL events (e.g.
+# person-years of follow-up, population size). When set, the model
+# predicts a *rate* (events per unit of EXPOSURE_COL) instead of a raw
+# count -- log(EXPOSURE_COL) enters the linear predictor with a fixed
+# coefficient of 1, not a coefficient central() fits. Leave as None (the
+# default) to model raw counts, as if every row had exposure 1.
+#   EXPOSURE_COL = "follow_up_years"
+EXPOSURE_COL = None
 # Restrict which organizations/nodes central() fans sub-tasks out to. Leave as
 # None to target every organization in the collaboration (the default). Set
 # this if the collaboration also lists an organization with no node actually
@@ -94,6 +103,7 @@ def main() -> None:
     print(f"Algorithm image: {ALGORITHM_IMAGE}")
     print(f"Predictors    : {PREDICTOR_COLS}")
     print(f"Outcome       : {OUTCOME_COL}")
+    print(f"Exposure      : {EXPOSURE_COL if EXPOSURE_COL else 'none (modeling raw counts)'}")
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Max iterations: {MAX_ITERATIONS}  (tolerance: {TOLERANCE})")
     print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
@@ -111,6 +121,7 @@ def main() -> None:
             "kwargs": {
                 "predictor_cols": PREDICTOR_COLS,
                 "outcome_col": OUTCOME_COL,
+                "exposure_col": EXPOSURE_COL,
                 "organizations": ORGANIZATIONS,
                 "max_iterations": MAX_ITERATIONS,
                 "tolerance": TOLERANCE,
