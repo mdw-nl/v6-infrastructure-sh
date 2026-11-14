@@ -48,6 +48,15 @@ This is a basic overfitting/memorization guard -- too few rows per feature
 risks a model that reproduces individual records rather than learning a
 general pattern. Like `min_organizations`/`min_rows`, it's a
 requester-supplied kwarg, not a node-enforced policy.
+
+Each round's mini-batch (`partial()`'s `batch_ratio` sample of that node's
+training split) is drawn with `random_state=seed + round_num`, not an
+unseeded `df.sample()` call -- the latter drew a fresh, unreproducible
+batch on every single call (even across otherwise-identical repeated
+runs), which also meant results varied run-to-run independent of `seed`.
+Combining `seed` with `round_num` keeps the batch different across rounds
+(so later rounds still see fresh training signal) while making the whole
+run reproducible end-to-end for a fixed `seed`.
 """
 
 import time
@@ -340,6 +349,7 @@ def central(
                     "global_mean": global_mean.tolist(),
                     "global_std": global_std.tolist(),
                     "seed": seed,
+                    "round_num": round_num,
                 },
             },
             organizations=org_ids,
@@ -487,6 +497,7 @@ def partial(
     train_ratio: float = TRAIN_TEST_RATIO,
     batch_ratio: float = BATCH_RATIO,
     seed: int = RANDOM_SEED,
+    round_num: int = 1,
 ) -> dict:
     _require_columns(df, [*feature_cols, target_col], "partial")
     df = df.assign(**{target_col: _derive_binary(df[target_col], target_representation, target_col)})
@@ -496,7 +507,10 @@ def partial(
         return {"state_dict": state_dict, "n": 0, "loss": 0.0}
 
     train_df = df_clean.sample(frac=train_ratio, random_state=seed)
-    batch_df = train_df.sample(frac=batch_ratio)
+    # Vary the batch-sampling seed by round: a constant seed would replay
+    # the exact same batch every round for a given node, starving later
+    # rounds of new training signal.
+    batch_df = train_df.sample(frac=batch_ratio, random_state=seed + round_num)
     n = len(batch_df)
     if n == 0:
         info("Batch is empty after sampling, skipping update")
