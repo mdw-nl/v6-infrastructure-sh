@@ -42,6 +42,17 @@ NOISE_TYPE = "none"
 SNR = None
 RANDOM_SEED = None
 
+# Minimum participation guards. MIN_ORGANIZATIONS requires at least this many
+# organizations to still qualify (see MIN_ROWS below) or central() errors
+# instead of proceeding on whichever organizations happen to qualify.
+# MIN_ROWS drops any organization reporting fewer usable rows than this from
+# the entire run -- not just from the patient count, from the time grid and
+# phase 2 as well. Defaults (1, 0) place no restriction beyond what's already
+# there. Note these are requester-side settings, like every other kwarg
+# here -- they catch misconfiguration, they aren't a node-enforced policy.
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
+
 
 def plot_km_curve(curve: list, n_patients: int, n_events: int, step_days: int, output_path: str = "km_curve.png") -> None:
     times = [p["time"] for p in curve]
@@ -132,6 +143,7 @@ def main() -> None:
     print(f"Event column  : {EVENT_COL}  (representation={EVENT_REPRESENTATION})")
     print(f"Organizations : {ORGANIZATIONS if ORGANIZATIONS else 'all (default)'}")
     print(f"Step days     : {STEP_DAYS}")
+    print(f"Min organizations: {MIN_ORGANIZATIONS}  (min rows per org: {MIN_ROWS})")
     print(f"Noise type    : {NOISE_TYPE}")
     if NOISE_TYPE != "none":
         print(f"SNR           : {SNR}")
@@ -155,6 +167,8 @@ def main() -> None:
                 "noise_type": NOISE_TYPE,
                 "snr": SNR,
                 "random_seed": RANDOM_SEED,
+                "min_organizations": MIN_ORGANIZATIONS,
+                "min_rows": MIN_ROWS,
             },
         },
         databases=[{"label": "default"}],

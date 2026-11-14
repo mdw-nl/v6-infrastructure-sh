@@ -34,7 +34,8 @@ def test_default_run_is_unaffected_by_noise_plumbing() -> None:
     range_result = _call_partial(
         "get_time_range", df, time_col="Survival.time", event_col="deadstatus.event"
     )
-    assert range_result == {"n": 8, "max_time": 80.0}
+    assert range_result["n"] == 8
+    assert range_result["max_time"] == 80.0
 
     events_result = _call_partial(
         "compute_events",

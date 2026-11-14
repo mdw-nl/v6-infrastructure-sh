@@ -22,6 +22,12 @@ def _run_central(datasets: list, **kwargs) -> dict:
     return client.wait_for_results(task.get("id"))[0]
 
 
+def _make_df(n_rows: int, start: int) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"Survival.time": list(range(start, start + n_rows)), "deadstatus.event": [1] * n_rows}
+    )
+
+
 def _classical_km(times: list, events: list, query_times: list) -> list:
     """Independent product-limit KM reference (exact-time, not fixed-width
     binning) used to cross-check the algorithm's discrete life-table method.
@@ -64,7 +70,9 @@ def _classical_km(times: list, events: list, query_times: list) -> list:
 def test_get_time_range_basic() -> None:
     df = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
     result = _call_partial(df, "get_time_range", time_col="Survival.time", event_col="deadstatus.event")
-    assert result == {"n": 3, "max_time": 30.0}
+    assert result["n"] == 3
+    assert result["max_time"] == 30.0
+    assert isinstance(result["organization_id"], int)
 
 
 def test_get_time_range_drops_nan_rows() -> None:
@@ -73,13 +81,15 @@ def test_get_time_range_drops_nan_rows() -> None:
     )
     result = _call_partial(df, "get_time_range", time_col="Survival.time", event_col="deadstatus.event")
     # Rows 2 and 3 each have a NaN in one required column; only rows 1 and 4 survive.
-    assert result == {"n": 2, "max_time": 40.0}
+    assert result["n"] == 2
+    assert result["max_time"] == 40.0
 
 
 def test_get_time_range_all_nan_returns_zero() -> None:
     df = pd.DataFrame({"Survival.time": [None, None], "deadstatus.event": [None, None]})
     result = _call_partial(df, "get_time_range", time_col="Survival.time", event_col="deadstatus.event")
-    assert result == {"n": 0, "max_time": 0.0}
+    assert result["n"] == 0
+    assert result["max_time"] == 0.0
 
 
 def test_get_time_range_raises_clear_error_for_missing_column() -> None:
@@ -374,3 +384,87 @@ def test_central_organizations_excludes_the_other_node() -> None:
     )
     # Would be 6 if the "excluded" org's identical data was wrongly included too.
     assert result["n_patients"] == 3
+
+
+# ── min_organizations / min_rows ────────────────────────────────────────────
+
+
+def test_min_organizations_validation_rejects_less_than_one() -> None:
+    df = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
+    result = _run_central(
+        [df], time_col="Survival.time", event_col="deadstatus.event", min_organizations=0
+    )
+    assert "min_organizations" in result["error"]
+
+
+def test_min_rows_validation_rejects_negative() -> None:
+    df = pd.DataFrame({"Survival.time": [10, 20, 30], "deadstatus.event": [1, 0, 1]})
+    result = _run_central(
+        [df], time_col="Survival.time", event_col="deadstatus.event", min_rows=-1
+    )
+    assert "min_rows" in result["error"]
+
+
+def test_min_organizations_fails_fast_when_task_has_too_few_orgs() -> None:
+    # The task itself only targets one organization -- caught before any
+    # sub-task is even created, independent of row counts.
+    org0 = _make_df(10, start=1)
+    org1 = _make_df(10, start=100)
+    result = _run_central(
+        [org0, org1],
+        time_col="Survival.time",
+        event_col="deadstatus.event",
+        organizations=["mock-0"],
+        min_organizations=2,
+    )
+    assert "error" in result
+    assert "min_organizations" in result["error"]
+
+
+def test_min_rows_excludes_low_row_organizations_from_aggregation() -> None:
+    # Two organizations don't clear min_rows=5; with min_organizations=1 the
+    # run still succeeds, but their data must be excluded from everything
+    # downstream, not just hidden from n_patients.
+    org0 = _make_df(10, start=1)  # times 1-10, qualifies
+    org1 = _make_df(2, start=100)  # times 100-101, excluded
+    org2 = _make_df(2, start=200)  # times 200-201, excluded
+
+    result = _run_central(
+        [org0, org1, org2],
+        time_col="Survival.time",
+        event_col="deadstatus.event",
+        min_rows=5,
+        min_organizations=1,
+        step_days=5,
+    )
+    assert "error" not in result
+    assert result["n_patients"] == 10
+    # The time grid must be shaped only by the qualifying organization's
+    # range (max time 10); if the excluded orgs' huge times (up to 201)
+    # leaked into global_max, the curve would extend far past this.
+    assert result["curve"][-1]["time"] < 50
+
+
+def test_min_rows_and_min_organizations_together_requires_qualifying_orgs() -> None:
+    # The scenario min_organizations alone can't catch: 3 organizations are
+    # nominally included in the task -- enough to satisfy min_organizations=2
+    # on its own -- but only one of them actually has enough rows to clear
+    # min_rows=5. Having enough organizations included is not the same as
+    # having enough organizations with enough usable data.
+    org0 = _make_df(10, start=1)
+    org1 = _make_df(2, start=100)
+    org2 = _make_df(2, start=200)
+
+    result = _run_central(
+        [org0, org1, org2],
+        time_col="Survival.time",
+        event_col="deadstatus.event",
+        min_rows=5,
+        min_organizations=2,
+    )
+    assert "error" in result
+    assert "min_organizations" in result["error"]
+    assert "min_rows" in result["error"]
+    # Names the specific organizations that fell short, not just a count.
+    assert "mock-1" in result["error"]
+    assert "mock-2" in result["error"]

@@ -22,6 +22,19 @@ registered in the collaboration but has no node actually running gets a
 sub-task it can never pick up, and client.wait_for_results() then blocks
 forever waiting on it -- `organizations` lets the caller exclude it. An
 unknown organization name raises a clear ValueError.
+
+`central()` also takes `min_organizations` (default 1, i.e. no restriction)
+and `min_rows` (default 0, i.e. no restriction). After phase 1, any
+organization reporting fewer than `min_rows` usable rows is dropped entirely
+from the rest of the run (it contributes to nothing downstream, including
+the time grid and phase 2). If fewer than `min_organizations` organizations
+remain after that filtering, `central()` returns a clear error instead of
+silently proceeding on whichever organizations happen to qualify -- having
+enough organizations nominally included in the task is not the same as
+having enough organizations with enough data. These are requester-supplied
+kwargs (set in run_study.py), not a node-enforced policy: they catch
+misconfiguration (an accidentally tiny test file, a near-empty node) but a
+requester who wants to bypass them can just set them to 0/1.
 """
 
 import numpy as np
@@ -39,6 +52,9 @@ NOISE_TYPES = {"none", "gaussian", "poisson"}
 NOISE_TYPE = "none"
 SNR = None
 RANDOM_SEED = None
+
+MIN_ORGANIZATIONS = 1
+MIN_ROWS = 0
 
 
 def _apply_gaussian_noise(df: pd.DataFrame, time_col: str, snr: float) -> pd.DataFrame:
@@ -188,12 +204,18 @@ def central(
     noise_type: str = NOISE_TYPE,
     snr: float = SNR,
     random_seed: int = RANDOM_SEED,
+    min_organizations: int = MIN_ORGANIZATIONS,
+    min_rows: int = MIN_ROWS,
 ) -> dict:
     noise_type = noise_type or "none"
     if noise_type not in NOISE_TYPES:
         return {"error": f"Unknown noise type: {noise_type!r}; expected one of {sorted(NOISE_TYPES)}"}
     if noise_type == "gaussian" and (snr is None or snr <= 0):
         return {"error": "For Gaussian noise, 'snr' must be provided and > 0."}
+    if min_organizations < 1:
+        return {"error": f"'min_organizations' must be at least 1, got {min_organizations}"}
+    if min_rows < 0:
+        return {"error": f"'min_rows' must be >= 0, got {min_rows}"}
 
     # Both phases must apply identical noise to the same node's data, or the
     # time range computed in phase 1 won't bound the noised times used in
@@ -207,6 +229,15 @@ def central(
 
     orgs = _filter_organizations(client.organization.list(), organizations, "central")
     org_ids = [org["id"] for org in orgs]
+    org_name_by_id = {org["id"]: org["name"] for org in orgs}
+
+    if len(org_ids) < min_organizations:
+        return {
+            "error": (
+                f"Only {len(org_ids)} organization(s) are included in this task, but "
+                f"'min_organizations' requires at least {min_organizations}."
+            )
+        }
 
     info("=" * 60)
     info("FEDERATED KAPLAN-MEIER SURVIVAL ANALYSIS")
@@ -215,6 +246,7 @@ def central(
     info(f"Time column   : {time_col}")
     info(f"Event column  : {event_col}  (representation={event_representation})")
     info(f"Step days     : {step_days}")
+    info(f"Min organizations: {min_organizations}  (min rows per org: {min_rows})")
     info(f"Noise type    : {noise_type}")
     if noise_type != "none":
         info(f"SNR           : {snr}")
@@ -239,8 +271,30 @@ def central(
     )
     range_results = client.wait_for_results(range_task["id"])
 
-    total_n = sum(r["n"] for r in range_results)
-    global_max = max(r["max_time"] for r in range_results)
+    # Drop any organization below min_rows entirely before anything else is
+    # computed -- it must not shape the time grid or contribute to phase 2,
+    # not just be excluded from the patient count.
+    qualifying = [r for r in range_results if r["n"] >= min_rows]
+    qualifying_org_ids = [r["organization_id"] for r in qualifying]
+
+    if len(qualifying_org_ids) < min_organizations:
+        below_threshold = [
+            org_name_by_id.get(r["organization_id"], r["organization_id"])
+            for r in range_results
+            if r["n"] < min_rows
+        ]
+        return {
+            "error": (
+                f"Only {len(qualifying_org_ids)} organization(s) have at least "
+                f"'min_rows'={min_rows} usable rows, but 'min_organizations' requires "
+                f"at least {min_organizations}. Organization(s) below the row "
+                f"threshold: {below_threshold}."
+            )
+        }
+
+    total_n = sum(r["n"] for r in qualifying)
+    global_max = max(r["max_time"] for r in qualifying)
+    info(f"Qualifying organizations: {len(qualifying_org_ids)} of {len(org_ids)}")
     info(f"Total patients : {total_n}")
     info(f"Global max time: {global_max:.1f} days")
 
@@ -264,7 +318,7 @@ def central(
                 **noise_kwargs,
             },
         },
-        organizations=org_ids,
+        organizations=qualifying_org_ids,
         name="km_events",
         description="Compute at-risk counts and event counts at each time step",
     )
@@ -336,7 +390,9 @@ def central(
 
 
 @data(1)
+@algorithm_client
 def get_time_range(
+    client: AlgorithmClient,
     df: pd.DataFrame,
     time_col: str = TIME_COL,
     event_col: str = EVENT_COL,
@@ -345,12 +401,15 @@ def get_time_range(
     snr: float = SNR,
     random_seed: int = RANDOM_SEED,
 ) -> dict:
+    # organization_id is reported so central() can tell which organization a
+    # given row count belongs to, to drop ones below min_rows from every
+    # later step (not just the aggregate patient count).
     _require_columns(df, [time_col, event_col], "get_time_range")
     df = df.assign(**{event_col: _derive_binary(df[event_col], event_representation, event_col)})
     df_clean = df.dropna(subset=[time_col, event_col])
     info(f"Dataset: {len(df)} rows — {len(df_clean)} usable after dropna")
     if len(df_clean) == 0:
-        return {"n": 0, "max_time": 0.0}
+        return {"n": 0, "max_time": 0.0, "organization_id": client.organization_id}
     # Noise is applied after dropna so both partial calls (this one and
     # compute_events) noise the identical set of rows in the identical
     # order, which is required for the two phases to stay consistent.
@@ -358,7 +417,7 @@ def get_time_range(
     max_t = float(df_clean[time_col].max())
     n_events = int((df_clean[event_col] == 1).sum())
     info(f"Local max survival time: {max_t:.1f} days — {n_events} events in {len(df_clean)} patients")
-    return {"n": len(df_clean), "max_time": max_t}
+    return {"n": len(df_clean), "max_time": max_t, "organization_id": client.organization_id}
 
 
 @data(1)
