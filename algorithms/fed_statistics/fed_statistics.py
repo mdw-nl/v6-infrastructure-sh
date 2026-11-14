@@ -16,6 +16,20 @@ registered in the collaboration but has no node actually running gets a
 sub-task it can never pick up, and client.wait_for_results() then blocks
 forever waiting on it -- `organizations` lets the caller exclude it. An
 unknown organization name raises a clear ValueError.
+
+A column's spec may also set `inliers`: either a `[min, max]` numeric range
+(exactly two non-bool numbers) or an explicit list of allowed categorical
+values. Values outside it are excluded from every other requested statistic
+for that column (so a sentinel like -999 for "unknown age" can't skew
+`mean`/`std`/`quantiles`) and counted separately -- request the `outliers`
+statistic to get that count (threshold-suppressed like `nans`). `outliers`
+requires `inliers` to be set. `nans` is unaffected: it still counts only
+structural NaNs, so a value excluded by `inliers` isn't double-counted.
+
+`filters` also accepts a range spec per column instead of an exact value or
+`isin` list: `{"age": {"gte": 15, "lte": 39}}` (any of `gte`/`gt`/`lte`/`lt`),
+to subset every column's stats to a stratum rather than excluding bad values
+from one column's own stats.
 """
 
 from hashlib import blake2b
@@ -37,6 +51,7 @@ VALID_STATISTICS = {
     "quantiles",
     "nrows",
     "nans",
+    "outliers",
 }
 
 DEFAULT_OPTIONS = {
@@ -90,11 +105,18 @@ def _normalize_statistics(statistics: dict) -> dict:
         if "binned_counts" in stats and (bins is None or len(bins) < 2):
             raise ValueError(f"binned_counts requires at least two bin edges for column '{column}'")
 
+        inliers = spec.get("inliers")
+        if inliers is not None and (not isinstance(inliers, list) or not inliers):
+            raise ValueError(f"'inliers' for column '{column}' must be a non-empty list")
+        if "outliers" in stats and inliers is None:
+            raise ValueError(f"'outliers' statistic for column '{column}' requires 'inliers' to be specified")
+
         normalized[column] = {
             "stats": list(stats),
             "bins": bins,
             "min_cap": spec.get("min_cap"),
             "max_cap": spec.get("max_cap"),
+            "inliers": inliers,
         }
     return normalized
 
@@ -107,12 +129,38 @@ def _normalize_options(options: dict = None) -> dict:
     return resolved
 
 
+_RANGE_FILTER_KEYS = {"gte", "gt", "lte", "lt"}
+
+
 def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     filtered = df
     for column, value in filters.items():
         if column not in filtered.columns:
             raise ValueError(f"Filter column '{column}' not found in dataset")
-        if isinstance(value, list):
+        if isinstance(value, dict):
+            unknown = set(value) - _RANGE_FILTER_KEYS
+            if unknown:
+                raise ValueError(
+                    f"Unknown range filter key(s) {sorted(unknown)} for column '{column}'; "
+                    f"expected any of {sorted(_RANGE_FILTER_KEYS)}"
+                )
+            if not value:
+                raise ValueError(
+                    f"Range filter for column '{column}' must include at least one of "
+                    f"{sorted(_RANGE_FILTER_KEYS)}"
+                )
+            numeric_column = _numeric_series(filtered, column)
+            mask = pd.Series(True, index=filtered.index)
+            if "gte" in value:
+                mask &= numeric_column >= value["gte"]
+            if "gt" in value:
+                mask &= numeric_column > value["gt"]
+            if "lte" in value:
+                mask &= numeric_column <= value["lte"]
+            if "lt" in value:
+                mask &= numeric_column < value["lt"]
+            filtered = filtered[mask]
+        elif isinstance(value, list):
             filtered = filtered[filtered[column].isin(value)]
         else:
             filtered = filtered[filtered[column] == value]
@@ -216,6 +264,38 @@ def compute_local_quantiles(df: pd.DataFrame, column: str, options: dict):
 
 def compute_local_nans(df: pd.DataFrame, column: str, options: dict):
     count = int(df[column].isna().sum())
+    return None if count <= options["suppress_threshold"] else count
+
+
+def _is_numeric_range(inliers: list) -> bool:
+    return len(inliers) == 2 and all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) for value in inliers
+    )
+
+
+def _apply_inliers(df: pd.DataFrame, column: str, inliers: list) -> tuple:
+    """Mask values outside `inliers` to NaN and return (masked_series, outlier_count).
+
+    `inliers` is a [min, max] numeric range when it's exactly two non-bool
+    numbers, otherwise an explicit list of allowed categorical values.
+    Existing NaNs are never counted as outliers -- `nans` already accounts
+    for them separately.
+    """
+    series = df[column]
+    if _is_numeric_range(inliers):
+        low, high = sorted(inliers)
+        is_inlier = pd.to_numeric(series, errors="coerce").between(low, high)
+    else:
+        is_inlier = series.isin(inliers)
+    is_inlier = is_inlier | series.isna()
+    outlier_count = int((~is_inlier).sum())
+    return series.where(is_inlier), outlier_count
+
+
+def compute_local_outliers(outlier_counts: dict, column: str, options: dict):
+    count = outlier_counts.get(column)
+    if count is None:
+        raise ValueError(f"'outliers' requested for column '{column}' but no 'inliers' was specified")
     return None if count <= options["suppress_threshold"] else count
 
 
@@ -328,18 +408,31 @@ def compute_local_minmax(df: pd.DataFrame, column: str, spec: dict, options: dic
 
 
 def _compute_stats_for_frame(working: pd.DataFrame, statistics: dict, options: dict) -> dict:
-    methods = {
-        "counts": lambda column, spec: compute_local_counts(working, column, options),
-        "binned_counts": lambda column, spec: compute_local_binned_counts(working, column, spec, options),
-        "minmax": lambda column, spec: compute_local_minmax(working, column, spec, options),
-        "mean": lambda column, spec: compute_local_means(working, column, options),
-        "std": lambda column, spec: compute_local_std_moments(working, column, options),
-        "quantiles": lambda column, spec: compute_local_quantiles(working, column, options),
-        "nrows": lambda column, spec: compute_local_nrows(working, column, options),
-        "nans": lambda column, spec: compute_local_nans(working, column, options),
-    }
-
     _require_columns(working, list(statistics.keys()), "compute_local_stats_frame")
+
+    # Apply each column's `inliers` (if any) once up front, so every other
+    # requested statistic for that column sees the masked values -- not just
+    # minmax (which only ever clips the displayed min/max via min_cap/max_cap).
+    masked = working.copy()
+    outlier_counts = {}
+    for column, spec in statistics.items():
+        inliers = spec.get("inliers")
+        if inliers is not None:
+            masked[column], outlier_counts[column] = _apply_inliers(working, column, inliers)
+
+    methods = {
+        "counts": lambda column, spec: compute_local_counts(masked, column, options),
+        "binned_counts": lambda column, spec: compute_local_binned_counts(masked, column, spec, options),
+        "minmax": lambda column, spec: compute_local_minmax(masked, column, spec, options),
+        "mean": lambda column, spec: compute_local_means(masked, column, options),
+        "std": lambda column, spec: compute_local_std_moments(masked, column, options),
+        "quantiles": lambda column, spec: compute_local_quantiles(masked, column, options),
+        "nrows": lambda column, spec: compute_local_nrows(masked, column, options),
+        # nans counts structural NaNs on the pre-mask column, so a value
+        # excluded by `inliers` is counted as an outlier, not double-counted as nan.
+        "nans": lambda column, spec: compute_local_nans(working, column, options),
+        "outliers": lambda column, spec: compute_local_outliers(outlier_counts, column, options),
+    }
 
     local_stats = {}
     for column, spec in statistics.items():
@@ -460,6 +553,11 @@ def compute_federated_nans(local_nans: list) -> int:
     return int(sum(value for value in local_nans if value is not None))
 
 
+# Same "sum the per-site counts, treat None as 0" logic as nans -- kept as its
+# own name so outliers and nans can diverge later without a confusing alias.
+compute_federated_outliers = compute_federated_nans
+
+
 def compute_federated_nrows(local_nrows: list) -> int:
     return int(sum(value for value in local_nrows if value is not None))
 
@@ -519,6 +617,7 @@ def aggregate_local_results(local_results: list, statistics: dict):
         "quantiles": compute_federated_quantiles,
         "nrows": compute_federated_nrows,
         "nans": compute_federated_nans,
+        "outliers": compute_federated_outliers,
     }
     warnings = []
     aggregated = {}

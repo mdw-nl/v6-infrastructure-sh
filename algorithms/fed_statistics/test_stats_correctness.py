@@ -1,9 +1,12 @@
 import numpy as np
 import pandas as pd
 import pytest
+from fed_statistics import (
+    DEFAULT_OPTIONS,
+    _filter_organizations,
+    compute_local_stats_frame,
+)
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
-
-from fed_statistics import _filter_organizations, compute_local_stats_frame
 
 
 def _build_datasets() -> list:
@@ -182,3 +185,89 @@ def test_central_organizations_excludes_the_other_node() -> None:
     )
     result = client.wait_for_results(task.get("id"))[0]
     assert result["columns"]["age"]["mean"] == pytest.approx(datasets[0]["age"].mean())
+
+
+# ── inliers / outliers ──────────────────────────────────────────────────────
+
+
+def test_inliers_numeric_range_excludes_sentinel_from_mean_and_counts_as_outlier() -> None:
+    # -999 is a common "unknown age" sentinel; without `inliers` it would
+    # silently wreck mean/std/quantiles instead of being excluded.
+    df = pd.DataFrame({"age": [40, 50, 60, -999, 70, 80]})
+    spec = {
+        "age": {
+            "stats": ["mean", "outliers"],
+            "bins": None,
+            "min_cap": None,
+            "max_cap": None,
+            "inliers": [0, 120],
+        }
+    }
+    options = {**DEFAULT_OPTIONS, "suppress_threshold": 0}
+    result = compute_local_stats_frame(df, spec, {}, options)["age"]
+
+    assert result["outliers"] == 1
+    valid_values = [40, 50, 60, 70, 80]
+    assert result["mean"]["sum"] == pytest.approx(sum(valid_values))
+    assert result["mean"]["n"] == len(valid_values)
+
+
+def test_inliers_categorical_excludes_unexpected_value_from_counts() -> None:
+    df = pd.DataFrame({"sex": ["M", "F", "M", "UNKNOWN", "F", "M"]})
+    spec = {
+        "sex": {
+            "stats": ["counts", "outliers"],
+            "bins": None,
+            "min_cap": None,
+            "max_cap": None,
+            "inliers": ["M", "F"],
+        }
+    }
+    options = {**DEFAULT_OPTIONS, "suppress_threshold": 0}
+    result = compute_local_stats_frame(df, spec, {}, options)["sex"]
+
+    assert set(result["counts"]) == {"M", "F"}
+    assert result["outliers"] == 1
+
+
+def test_nans_and_outliers_are_not_double_counted() -> None:
+    df = pd.DataFrame({"age": [40, None, -999, 70]})
+    spec = {
+        "age": {
+            "stats": ["nans", "outliers", "nrows"],
+            "bins": None,
+            "min_cap": None,
+            "max_cap": None,
+            "inliers": [0, 120],
+        }
+    }
+    options = {**DEFAULT_OPTIONS, "suppress_threshold": 0}
+    result = compute_local_stats_frame(df, spec, {}, options)["age"]
+
+    assert result["nans"] == 1
+    assert result["outliers"] == 1
+    assert result["nrows"] == 2  # only 40 and 70 survive both nan-drop and the inlier mask
+
+
+def test_outliers_statistic_requires_inliers_to_be_specified() -> None:
+    with pytest.raises(ValueError, match="requires 'inliers'"):
+        _run_central({"age": {"stats": ["outliers"]}})
+
+
+# ── range filters ────────────────────────────────────────────────────────────
+
+
+def test_range_filter_restricts_to_stratum() -> None:
+    result = _run_central(
+        {"age": ["nrows"]},
+        filters={"age": {"gte": 15, "lte": 39}},
+        options={"suppress_threshold": 0},
+    )
+    pooled = pd.concat(_build_datasets(), ignore_index=True)
+    expected = pooled[(pooled["age"] >= 15) & (pooled["age"] <= 39)]
+    assert result["columns"]["age"]["nrows"] == len(expected)
+
+
+def test_range_filter_unknown_key_raises() -> None:
+    with pytest.raises(ValueError, match="Unknown range filter key"):
+        _run_central({"age": ["nrows"]}, filters={"age": {"between": 10}})
