@@ -7,9 +7,7 @@ multi-ecosystem-groups:
 
 updates:
   - package-ecosystem: "uv"
-    directories:
-      - "/"
-      - "/data/datavalgen"
+    directory: "/"
     patterns: ["*"]
     multi-ecosystem-group: "dependencies"
 
