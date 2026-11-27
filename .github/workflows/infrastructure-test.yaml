@@ -51,3 +51,19 @@ jobs:
       - name: Confirm containers are removed
         if: always()
         run: docker ps -a
+
+  notify-dependabot-failure:
+    needs: [vantage6-demo]
+    if: failure() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTIFY: "@tim-hendriks"
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_URL" --body "$NOTIFY CI failed on this dependency update: $RUN_URL"
